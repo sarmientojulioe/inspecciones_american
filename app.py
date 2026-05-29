@@ -1040,17 +1040,17 @@ def render_formularios() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Login (usuario y clave contra LICUSUARIO)
+# Login (usuario y clave contra licusuario)
 # --------------------------------------------------------------------------- #
 @st.cache_data(ttl=600)
 def _usuarios_login() -> list[str]:
-    df = db.run_query("SELECT NOMBRE FROM LICUSUARIO "
+    df = db.run_query("SELECT NOMBRE FROM licusuario "
                       "WHERE NOMBRE IS NOT NULL AND NOMBRE <> '' ORDER BY NOMBRE")
     return df["NOMBRE"].tolist()
 
 
 def _validar_login(nombre: str, clave: str):
-    df = db.run_query("SELECT IDUSUARIO, NOMBRE, PASSWORD FROM LICUSUARIO WHERE NOMBRE = ?",
+    df = db.run_query("SELECT IDUSUARIO, NOMBRE, PASSWORD FROM licusuario WHERE NOMBRE = ?",
                       [nombre])
     if df.empty:
         return None

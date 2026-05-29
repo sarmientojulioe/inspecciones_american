@@ -88,7 +88,7 @@ JOIN clientes c          ON c.IDCLIENTE = s.IDCLIENTE
 LEFT JOIN servicios sv   ON sv.IDSERVICIO = s.IDSERVICIO
 LEFT JOIN provincias pr  ON pr.id = c.IDPROVINCIA
 LEFT JOIN localidades lo ON lo.id = c.IDLOCALIDAD AND lo.id_provincia = c.IDPROVINCIA
-LEFT JOIN LICUSUARIO u   ON u.IDUSUARIO = s.IDUSUARIO
+LEFT JOIN licusuario u   ON u.IDUSUARIO = s.IDUSUARIO
 WHERE s.IDSOLICITUD = ?
 """
 
@@ -144,7 +144,7 @@ FROM solicitud_servicio_det d
 LEFT JOIN equipos e             ON e.IDEQUIPO = d.IDEQUIPO
 LEFT JOIN informe_preliminar ip ON ip.IDSOLICITUDDETALLE = d.IDSOLICITUDDETALLE
 LEFT JOIN tiposresultado tr     ON tr.IDRESULTADO = ip.IDRESULTADO
-LEFT JOIN LICUSUARIO u          ON u.IDUSUARIO = ip.IDUSUARIO
+LEFT JOIN licusuario u          ON u.IDUSUARIO = ip.IDUSUARIO
 LEFT JOIN provincias prd        ON prd.id = d.IDPROVINCIA
 LEFT JOIN localidades lod       ON lod.id = d.IDLOCALIDAD AND lod.id_provincia = d.IDPROVINCIA
 WHERE d.IDSOLICITUD = ?
@@ -223,7 +223,7 @@ JOIN clientes c             ON c.IDCLIENTE = s.IDCLIENTE
 LEFT JOIN equipos e         ON e.IDEQUIPO = d.IDEQUIPO
 LEFT JOIN informe_preliminar ip ON ip.IDSOLICITUDDETALLE = d.IDSOLICITUDDETALLE
 LEFT JOIN tiposresultado tr ON tr.IDRESULTADO = ip.IDRESULTADO
-LEFT JOIN LICUSUARIO us      ON us.IDUSUARIO = ip.IDUSUARIO
+LEFT JOIN licusuario us      ON us.IDUSUARIO = ip.IDUSUARIO
 LEFT JOIN localidades lc     ON lc.id = c.IDLOCALIDAD AND lc.id_provincia = c.IDPROVINCIA
 LEFT JOIN provincias pc      ON pc.id = c.IDPROVINCIA
 LEFT JOIN localidades le     ON le.id = d.IDLOCALIDAD AND le.id_provincia = d.IDPROVINCIA
@@ -375,7 +375,7 @@ def localidades_lista(idprovincia: str) -> pd.DataFrame:
 
 
 def usuarios_lista() -> pd.DataFrame:
-    return db.run_query("SELECT IDUSUARIO AS id, NOMBRE AS nombre FROM LICUSUARIO ORDER BY NOMBRE")
+    return db.run_query("SELECT IDUSUARIO AS id, NOMBRE AS nombre FROM licusuario ORDER BY NOMBRE")
 
 
 def resultados_lista() -> pd.DataFrame:
@@ -561,7 +561,7 @@ JOIN solicitud_servicio_det d ON d.IDSOLICITUD = s.IDSOLICITUD
 LEFT JOIN equipos e        ON e.IDEQUIPO = d.IDEQUIPO
 JOIN informe_preliminar ip ON ip.IDSOLICITUDDETALLE = d.IDSOLICITUDDETALLE
 LEFT JOIN tiposresultado tr ON tr.IDRESULTADO = ip.IDRESULTADO
-LEFT JOIN LICUSUARIO u      ON u.IDUSUARIO = ip.IDUSUARIO
+LEFT JOIN licusuario u      ON u.IDUSUARIO = ip.IDUSUARIO
 WHERE s.IDSERVICIO = 1 AND s.FECHA BETWEEN ? AND ?
 ORDER BY s.FECHA DESC, num
 """
