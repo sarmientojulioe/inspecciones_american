@@ -1,8 +1,9 @@
 streamlit>=1.40
-pyodbc>=5.1
 pandas>=2.2
 openpyxl>=3.1
 reportlab>=4.2
 plotly>=5.24
 python-dotenv>=1.0
 pymysql>=1.1
+# pyodbc solo se necesita con DB_ENGINE=anywhere (Windows on-prem); en Linux/VPS no.
+pyodbc>=5.1; platform_system == "Windows"
