@@ -41,13 +41,17 @@ PKS = {
 
 
 def mysql_config() -> dict:
-    return dict(
+    cfg = dict(
         host=os.getenv("MYSQL_HOST", "127.0.0.1"),
         port=int(os.getenv("MYSQL_PORT", "3306")),
         user=os.getenv("MYSQL_USER", "root"),
         password=os.getenv("MYSQL_PASSWORD", ""),
         charset="utf8mb4",
     )
+    ca = os.getenv("MYSQL_SSL_CA", "").strip()
+    if ca:  # DigitalOcean Managed MySQL exige SSL
+        cfg["ssl"] = {"ca": ca}
+    return cfg
 
 
 def tipo_mysql(domain: str, width: int, scale: int) -> str:

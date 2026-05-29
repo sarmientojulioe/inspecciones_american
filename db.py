@@ -19,7 +19,7 @@ ENGINE = os.getenv("DB_ENGINE", "anywhere").strip().lower()
 
 
 def _mysql_cfg() -> dict:
-    return dict(
+    cfg = dict(
         host=os.getenv("MYSQL_HOST", "127.0.0.1"),
         port=int(os.getenv("MYSQL_PORT", "3306")),
         user=os.getenv("MYSQL_USER", "root"),
@@ -27,6 +27,10 @@ def _mysql_cfg() -> dict:
         database=os.getenv("MYSQL_DB", "emicar_insp"),
         charset="utf8mb4",
     )
+    ca = os.getenv("MYSQL_SSL_CA", "").strip()
+    if ca:  # DigitalOcean Managed MySQL exige SSL
+        cfg["ssl"] = {"ca": ca}
+    return cfg
 
 
 def adapt(sql: str) -> str:

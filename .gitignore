@@ -6,3 +6,6 @@ venv/
 *.xlsx
 *.pdf
 *.log
+*.sql
+*.sql.gz
+*.crt
