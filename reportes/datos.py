@@ -375,7 +375,74 @@ def localidades_lista(idprovincia: str) -> pd.DataFrame:
 
 
 def usuarios_lista() -> pd.DataFrame:
-    return db.run_query("SELECT IDUSUARIO AS id, NOMBRE AS nombre FROM licusuario ORDER BY NOMBRE")
+    """Usuarios HABILITADOS (para desplegables de inspector / cargado por)."""
+    return db.run_query(
+        "SELECT IDUSUARIO AS id, NOMBRE AS nombre FROM licusuario "
+        "WHERE habilitado = 1 ORDER BY NOMBRE")
+
+
+def usuarios_admin() -> pd.DataFrame:
+    """Todos los usuarios, para la pantalla de administración."""
+    return db.run_query(
+        "SELECT IDUSUARIO AS id, NOMBRE AS nombre, EMAIL AS email, "
+        "habilitado, categoria FROM licusuario ORDER BY NOMBRE")
+
+
+_UPD_USUARIO = ("UPDATE licusuario SET NOMBRE=?, EMAIL=?, habilitado=?, categoria=? "
+                "WHERE IDUSUARIO=?")
+
+
+def actualizar_usuarios(cambios: list[dict]) -> int:
+    """Actualiza nombre/email/habilitado/categoria de usuarios. Escribe en producción."""
+    afectadas = 0
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            for c in cambios:
+                cur.execute(db.adapt(_UPD_USUARIO), [
+                    c.get("nombre"), c.get("email"), int(c.get("habilitado", 1)),
+                    c.get("categoria"), c["id"]])
+                afectadas += cur.rowcount
+            conn.commit()
+            return afectadas
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def cambiar_password(idusuario: str, nueva: str) -> int:
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt("UPDATE licusuario SET PASSWORD=? WHERE IDUSUARIO=?"),
+                        [nueva, idusuario])
+            n = cur.rowcount
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def agregar_usuario(nombre: str, password: str, email: str | None,
+                    categoria: str | None) -> str:
+    """Crea un usuario nuevo (IDUSUARIO = MAX+1 a 5 dígitos). Devuelve el id."""
+    import datetime as _dt
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt(
+                "SELECT COALESCE(MAX(CAST(IDUSUARIO AS INTEGER)),0)+1 FROM licusuario"))
+            idusr = str(int(cur.fetchone()[0])).zfill(5)
+            cur.execute(db.adapt(
+                "INSERT INTO licusuario (IDUSUARIO, NOMBRE, PASSWORD, EMAIL, habilitado, "
+                "categoria, FECHAALTA) VALUES (?,?,?,?,?,?,?)"),
+                [idusr, nombre, password, email, 1, categoria, _dt.date.today()])
+            conn.commit()
+            return idusr
+        except Exception:
+            conn.rollback()
+            raise
 
 
 def resultados_lista() -> pd.DataFrame:

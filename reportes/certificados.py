@@ -17,7 +17,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import (
-    HRFlowable, Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
+    HRFlowable, Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
 
 from reportes import datos, plantillas_config as cfg
@@ -76,6 +76,12 @@ def _anio(v) -> str:
 def _img(path: str, width: float) -> Image:
     iw, ih = ImageReader(path).getSize()
     return Image(path, width=width, height=width * ih / iw)
+
+
+def _img_bytes(data: bytes, max_w: float, max_h: float) -> Image:
+    iw, ih = ImageReader(BytesIO(data)).getSize()
+    r = min(max_w / iw, max_h / ih)
+    return Image(BytesIO(data), width=iw * r, height=ih * r)
 
 
 def _informe_nro(d) -> str:
@@ -143,7 +149,7 @@ def _build(elementos, apaisado: bool = False) -> bytes:
 # --------------------------------------------------------------------------- #
 # Informe Preliminar de Inspeccion
 # --------------------------------------------------------------------------- #
-def _preliminar_story(d) -> list:
+def _preliminar_story(d, fotos: list | None = None) -> list:
     e = []
     # Encabezado: logo + titulo
     enc = Table(
@@ -212,6 +218,29 @@ def _preliminar_story(d) -> list:
     e.append(Paragraph(f"<b><i>{cfg.FIRMA_PRELIMINAR}</i></b>", ParagraphStyle(
         "fp", parent=NORMAL, fontName="Helvetica-BoldOblique", alignment=TA_CENTER)))
 
+    # Anexo fotográfico (hasta 4 fotos)
+    if fotos:
+        e.append(PageBreak())
+        e.append(Paragraph("<u>ANEXO FOTOGRÁFICO</u>", TITULO))
+        e.append(Spacer(1, 0.3 * cm))
+        celdas = []
+        for data in fotos[:4]:
+            try:
+                celdas.append(_img_bytes(data, 8.3 * cm, 6.0 * cm))
+            except Exception:  # noqa: BLE001
+                pass
+        filas = [celdas[i:i + 2] for i in range(0, len(celdas), 2)]
+        for f in filas:
+            while len(f) < 2:
+                f.append("")
+        if filas:
+            tf = Table(filas, colWidths=[CONTENT_W / 2] * 2)
+            tf.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+            e.append(tf)
+
     # Pie
     e.append(Spacer(1, 0.8 * cm))
     e.append(HRFlowable(width="100%", thickness=0.5, color=colors.black))
@@ -230,11 +259,11 @@ def _preliminar_story(d) -> list:
     return e
 
 
-def informe_preliminar_pdf(idsolicituddetalle) -> bytes:
+def informe_preliminar_pdf(idsolicituddetalle, fotos: list | None = None) -> bytes:
     d = datos.datos_certificado(idsolicituddetalle)
     if d is None:
         raise ValueError("No se encontró el equipo solicitado.")
-    return _build(_preliminar_story(d))
+    return _build(_preliminar_story(d, fotos=fotos))
 
 
 _BLANK_KEYS = (

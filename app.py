@@ -146,6 +146,11 @@ def cat_usuarios() -> pd.DataFrame:
     return datos.usuarios_lista()
 
 
+@st.cache_data(ttl=120)
+def cat_usuarios_admin() -> pd.DataFrame:
+    return datos.usuarios_admin()
+
+
 @st.cache_data(ttl=3600)
 def cat_resultados() -> pd.DataFrame:
     return datos.resultados_lista()
@@ -232,6 +237,10 @@ def _cambio(a, b) -> bool:
 
 def _es_favorable(estado) -> bool:
     return isinstance(estado, str) and estado.strip().lower().startswith("favorable")
+
+
+def _es_desfavorable(estado) -> bool:
+    return isinstance(estado, str) and estado.strip().lower().startswith("desfavorable")
 
 
 def _txtv(v) -> str:
@@ -468,6 +477,19 @@ def render_detalle(min_f: dt.date, max_f: dt.date) -> None:
                 else:
                     st.button("Certificación (solo si Favorable)", disabled=True,
                               key=f"certoff_{idd}", use_container_width=True)
+            if _es_desfavorable(fila.get("resultado")):
+                up = st.file_uploader(
+                    "Adjuntar fotos al Informe Preliminar (hasta 4)",
+                    type=["png", "jpg", "jpeg"], accept_multiple_files=True,
+                    key=f"fotos_{idd}")
+                if up:
+                    imgs = [f.getvalue() for f in up[:4]]
+                    st.download_button(
+                        f"Informe Preliminar con {len(imgs)} foto(s) (PDF)",
+                        data=certificados.informe_preliminar_pdf(idd, fotos=imgs),
+                        file_name=f"informe_preliminar_{num}_{idd}_fotos.pdf",
+                        mime="application/pdf", key=f"prelimf_{idd}",
+                        use_container_width=True)
             campos = {EQ_LABELS[c]: fmt(fila[c], c) for c in EQ_LABELS if c in eqs.columns}
             campos = {k: v for k, v in campos.items() if v not in ("—", "")}
             det_df = pd.DataFrame({"Campo": list(campos), "Valor": list(campos.values())})
@@ -1016,6 +1038,89 @@ def render_informes() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Pestaña: administración de usuarios (escribe en producción)
+# --------------------------------------------------------------------------- #
+def render_usuarios() -> None:
+    st.subheader("Usuarios")
+    st.warning("Cambios sobre los usuarios del sistema (login e inspectores).")
+    base = cat_usuarios_admin()
+
+    ed = pd.DataFrame({
+        "id": base["id"].values,
+        "Usuario": base["nombre"].fillna("").values,
+        "Email": base["email"].fillna("").values,
+        "Habilitado": (base["habilitado"] == 1).values,
+        "Categoría": base["categoria"].fillna("").values,
+    })
+    original = ed.copy()
+    edited = st.data_editor(
+        ed, hide_index=True, use_container_width=True, key="editor_users",
+        column_order=["Usuario", "Email", "Habilitado", "Categoría"],
+        column_config={
+            "Usuario": st.column_config.TextColumn(required=True),
+            "Habilitado": st.column_config.CheckboxColumn(
+                help="Destildá para deshabilitar (no puede iniciar sesión ni ser inspector)"),
+            "Categoría": st.column_config.TextColumn(max_chars=1),
+        })
+    if st.button("Guardar usuarios", type="primary"):
+        ucols = ["Usuario", "Email", "Habilitado", "Categoría"]
+        cambios = []
+        for i in range(len(edited)):
+            nue, vie = edited.iloc[i], original.iloc[i]
+            if any(_cambio(nue[c], vie[c]) for c in ucols):
+                cambios.append(dict(
+                    id=str(nue["id"]), nombre=_norm(nue["Usuario"]),
+                    email=_norm(nue["Email"]),
+                    habilitado=1 if bool(nue["Habilitado"]) else 0,
+                    categoria=_norm(nue["Categoría"])))
+        if not cambios:
+            st.info("No hay cambios para guardar.")
+        else:
+            try:
+                n = datos.actualizar_usuarios(cambios)
+                st.cache_data.clear()
+                st.success(f"{n} usuario(s) actualizado(s).")
+                st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"No se pudo guardar: {exc}")
+
+    st.divider()
+    st.markdown("**Cambiar contraseña**")
+    umap = {r.nombre: r.id for r in base.itertuples()}
+    pc1, pc2 = st.columns(2)
+    u_sel = pc1.selectbox("Usuario", list(umap), index=None, placeholder="Elegí...", key="pw_user")
+    nueva = pc2.text_input("Nueva contraseña", type="password", max_chars=10, key="pw_new")
+    if st.button("Cambiar contraseña"):
+        if not u_sel or not _norm(nueva):
+            st.warning("Elegí un usuario e ingresá la contraseña.")
+        else:
+            try:
+                datos.cambiar_password(umap[u_sel], nueva.strip())
+                st.cache_data.clear()
+                st.success(f"Contraseña actualizada para {u_sel}.")
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"No se pudo cambiar: {exc}")
+
+    with st.expander("➕ Agregar usuario"):
+        n_nombre = st.text_input("Nombre", max_chars=50, key="nu_nombre")
+        n_pass = st.text_input("Contraseña", type="password", max_chars=10, key="nu_pass")
+        n_email = st.text_input("Email", max_chars=50, key="nu_email")
+        n_cat = st.text_input("Categoría (1 letra)", max_chars=1, key="nu_cat")
+        if st.button("Crear usuario"):
+            if not _norm(n_nombre) or not _norm(n_pass):
+                st.warning("Nombre y contraseña son obligatorios.")
+            else:
+                try:
+                    idu = datos.agregar_usuario(n_nombre.strip(), n_pass.strip(),
+                                                _norm(n_email), _norm(n_cat))
+                    st.cache_data.clear()
+                    st.success(f"Usuario creado (id {idu}).")
+                    st.rerun()
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"No se pudo crear: {exc}")
+
+
+# --------------------------------------------------------------------------- #
 # Pestaña: formularios en blanco para llevar a la inspección
 # --------------------------------------------------------------------------- #
 def render_formularios() -> None:
@@ -1045,13 +1150,14 @@ def render_formularios() -> None:
 @st.cache_data(ttl=600)
 def _usuarios_login() -> list[str]:
     df = db.run_query("SELECT NOMBRE FROM licusuario "
-                      "WHERE NOMBRE IS NOT NULL AND NOMBRE <> '' ORDER BY NOMBRE")
+                      "WHERE NOMBRE IS NOT NULL AND NOMBRE <> '' AND habilitado = 1 "
+                      "ORDER BY NOMBRE")
     return df["NOMBRE"].tolist()
 
 
 def _validar_login(nombre: str, clave: str):
-    df = db.run_query("SELECT IDUSUARIO, NOMBRE, PASSWORD FROM licusuario WHERE NOMBRE = ?",
-                      [nombre])
+    df = db.run_query("SELECT IDUSUARIO, NOMBRE, PASSWORD FROM licusuario "
+                      "WHERE NOMBRE = ? AND habilitado = 1", [nombre])
     if df.empty:
         return None
     r = df.iloc[0]
@@ -1120,7 +1226,7 @@ except Exception as exc:  # noqa: BLE001
     st.stop()
 
 tabs = st.tabs(["Inspecciones", "Detalle inspección", "Cargar inspección",
-                "Editar / estado", "Informes", "Formularios"])
+                "Editar / estado", "Informes", "Formularios", "Usuarios"])
 with tabs[0]:
     render_inspecciones(MIN_F, MAX_F)
 with tabs[1]:
@@ -1133,3 +1239,5 @@ with tabs[4]:
     render_informes()
 with tabs[5]:
     render_formularios()
+with tabs[6]:
+    render_usuarios()
