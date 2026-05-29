@@ -1,0 +1,13 @@
+# Configuracion para publicar en la red (varios usuarios via navegador).
+[server]
+address = "0.0.0.0"
+port = 8501
+headless = true
+enableXsrfProtection = true
+enableStaticServing = true
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
