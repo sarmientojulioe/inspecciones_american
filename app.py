@@ -1538,8 +1538,9 @@ def _pie_corporativo() -> None:
         f"{cfg.EMPRESA_NOMBRE}</p>"
         f"<p style='color:#9fd0ec;margin:0 0 4px 0'>{cfg.EMPRESA_TAGLINE}</p>"
         f"<p style='color:#cbd5e1;font-size:.9rem;margin:0'>"
-        f"{cfg.EMPRESA_DIRECCION} · Tel: {cfg.EMPRESA_TEL} · {cfg.EMPRESA_EMAIL} · "
-        f"{cfg.EMPRESA_WEB}</p>"
+        f"📍 <a href='{cfg.EMPRESA_MAPS}' target='_blank' "
+        f"style='color:#9fd0ec;text-decoration:underline'>{cfg.EMPRESA_DIRECCION}</a>"
+        f" · Tel: {cfg.EMPRESA_TEL} · {cfg.EMPRESA_EMAIL} · {cfg.EMPRESA_WEB}</p>"
         f"<p style='color:#cbd5e1;font-size:.85rem;margin:4px 0 0 0'>"
         f"Certificada en ISO 9001, ISO 14001 e ISO 45001 · Acreditada por el OAA</p>"
         f"</div>", unsafe_allow_html=True)
