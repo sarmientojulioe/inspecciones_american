@@ -1600,6 +1600,17 @@ if _pagina_verificacion():
 # porque _validar_login consulta licusuario.rol.
 _init_esquema()
 
+# --- Barra superior corporativa (navy) + línea de gradiente (estilo campus) ---
+st.markdown(
+    "<div style='background:#182640;color:#cbd5e1;font-family:Lato,sans-serif;"
+    "padding:6px 16px;border-radius:6px;display:flex;justify-content:space-between;"
+    "flex-wrap:wrap;gap:6px;font-size:.72rem;letter-spacing:.04em;"
+    "text-transform:uppercase'>"
+    f"<span>{cfg.EMPRESA_NOMBRE} · {cfg.EMPRESA_TAGLINE}</span>"
+    "<span>Trinorma ISO 9001 · 14001 · 45001 — Acreditada OAA</span></div>"
+    "<div style='height:4px;background:linear-gradient(90deg,#50a5d9,#2884c7,#22355b);"
+    "border-radius:3px;margin:4px 0 12px 0'></div>", unsafe_allow_html=True)
+
 # --- Barra de usuario arriba a la derecha: nombre · rol, menú ⋮ (settings) y salir ---
 if st.session_state.get("auth"):
     _u1, _u2, _u3 = st.columns([7, 0.9, 1.7])
@@ -1660,21 +1671,22 @@ for _t, (_, _fn) in zip(_tabs, _secciones):
     with _t:
         _fn()
 
-# --- Pie de página corporativo (todas las páginas) ---
-st.divider()
+# --- Pie de página corporativo (banda navy, estilo campus) ---
+st.markdown("<div style='margin-top:24px'></div>", unsafe_allow_html=True)
 st.markdown(
-    f"<div style='font-family:Lato,sans-serif'>"
-    f"<p style='color:{cfg.COLOR_NAVY};font-weight:900;font-size:1.05rem;margin-bottom:0'>"
+    f"<div style='background:#182640;border-radius:10px;padding:16px 20px;"
+    f"font-family:Lato,sans-serif'>"
+    f"<p style='color:#FFFFFF;font-weight:900;font-size:1.05rem;margin:0'>"
     f"{cfg.EMPRESA_NOMBRE}</p>"
-    f"<p style='color:{cfg.COLOR_AZUL};margin:0 0 4px 0'>{cfg.EMPRESA_TAGLINE}</p>"
-    f"<p style='color:{cfg.COLOR_GRIS};font-size:.9rem;margin:0'>"
+    f"<p style='color:#9fd0ec;margin:0 0 6px 0'>{cfg.EMPRESA_TAGLINE}</p>"
+    f"<p style='color:#cbd5e1;font-size:.9rem;margin:0'>"
     f"{cfg.EMPRESA_DIRECCION} · Tel: {cfg.EMPRESA_TEL} · {cfg.EMPRESA_EMAIL} · "
     f"{cfg.EMPRESA_WEB}</p>"
-    f"<p style='color:{cfg.COLOR_GRIS};font-size:.9rem;margin:6px 0 6px 0'>"
-    f"<b>Certificada en ISO 9001, ISO 14001 e ISO 45001</b> y "
-    f"<b>acreditada por el OAA</b>.</p></div>", unsafe_allow_html=True)
+    f"<p style='color:#cbd5e1;font-size:.85rem;margin:6px 0 0 0'>"
+    f"Certificada en ISO 9001, ISO 14001 e ISO 45001 · Acreditada por el OAA</p>"
+    f"</div>", unsafe_allow_html=True)
 _fc = st.columns([1, 1, 1, 1, 6])
-_fc[0].image(cfg.LOGOS_CERTIFICACION[0], width=78)   # ISO 9001
-_fc[1].image(cfg.LOGOS_CERTIFICACION[1], width=78)   # ISO 14001
-_fc[2].image(cfg.LOGOS_CERTIFICACION[2], width=78)   # ISO 45001
-_fc[3].image(cfg.LOGOS_CERTIFICACION[3], width=108)  # OAA
+_fc[0].image(cfg.LOGOS_CERTIFICACION[0], width=74)   # ISO 9001
+_fc[1].image(cfg.LOGOS_CERTIFICACION[1], width=74)   # ISO 14001
+_fc[2].image(cfg.LOGOS_CERTIFICACION[2], width=74)   # ISO 45001
+_fc[3].image(cfg.LOGOS_CERTIFICACION[3], width=104)  # OAA
