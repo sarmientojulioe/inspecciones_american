@@ -29,13 +29,42 @@ st.set_page_config(
 _LATO_CSS = (Path(__file__).parent / "assets" / "lato.css").read_text(encoding="utf-8")
 st.markdown(f"<style>{_LATO_CSS}</style>", unsafe_allow_html=True)
 
-# Marca American Advisor: navy en títulos, azul en la pestaña activa, sin barra lateral
+# Marca American Advisor: paleta del manual (navy/azul/cyan/gris), sin barra lateral
 _BRAND_CSS = f"""
+/* Fondo general con un leve tinte azulado (en vez de blanco puro) */
+.stApp {{ background-color: #EEF3F9; }}
+[data-testid="stHeader"] {{ background: transparent; }}
 h1, h2, h3 {{ color: {cfg.COLOR_NAVY}; font-family: Lato, sans-serif; }}
-.stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {{
-    color: {cfg.COLOR_AZUL};
+
+/* Pestañas: barra con fondo, activa en navy con texto blanco */
+.stTabs [data-baseweb="tab-list"] {{
+    background: #FFFFFF; border-radius: 10px; padding: 6px;
+    border: 1px solid #D6E2F0; gap: 4px;
 }}
-.stTabs [data-baseweb="tab-highlight"] {{ background-color: {cfg.COLOR_AZUL}; }}
+.stTabs [data-baseweb="tab"] {{ border-radius: 8px; padding: 6px 14px; }}
+.stTabs [data-baseweb="tab"][aria-selected="true"] {{
+    background: {cfg.COLOR_NAVY}; color: #FFFFFF;
+}}
+.stTabs [data-baseweb="tab-highlight"] {{ background-color: transparent; }}
+
+/* Botones primarios en azul de marca */
+.stButton button[kind="primary"], .stDownloadButton button[kind="primary"] {{
+    background-color: {cfg.COLOR_AZUL}; border-color: {cfg.COLOR_AZUL};
+}}
+/* Botones secundarios con borde azul */
+.stButton button[kind="secondary"], .stDownloadButton button[kind="secondary"] {{
+    border-color: {cfg.COLOR_AZUL}; color: {cfg.COLOR_NAVY};
+}}
+
+/* Separadores y expanders con acento de marca */
+hr {{ border-color: {cfg.COLOR_AZUL} !important; opacity: .5; }}
+[data-testid="stExpander"] details {{
+    border: 1px solid #D6E2F0; border-radius: 10px; background: #FFFFFF;
+}}
+/* Tarjetas blancas para dataframes/tablas sobre el fondo tintado */
+[data-testid="stDataFrame"], [data-testid="stTable"] {{
+    background: #FFFFFF; border-radius: 8px;
+}}
 [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {{ display: none; }}
 """
 st.markdown(f"<style>{_BRAND_CSS}</style>", unsafe_allow_html=True)
@@ -1584,17 +1613,6 @@ with _h2:
         unsafe_allow_html=True)
     st.image(cfg.LOGO_AREA_INSP, width=230)
 
-# --- Certificaciones de la empresa (abajo, con leyenda) ---
-st.markdown(
-    f"<p style='color:{cfg.COLOR_GRIS};margin-bottom:6px;font-family:Lato,sans-serif'>"
-    f"La empresa se encuentra <b>certificada en las normas ISO 9001, ISO 14001 e "
-    f"ISO 45001</b> y <b>acreditada por el OAA</b>.</p>", unsafe_allow_html=True)
-_ic = st.columns([1, 1, 1, 1, 6])
-_ic[0].image(cfg.LOGOS_CERTIFICACION[0], width=80)   # ISO 9001
-_ic[1].image(cfg.LOGOS_CERTIFICACION[1], width=80)   # ISO 14001
-_ic[2].image(cfg.LOGOS_CERTIFICACION[2], width=80)   # ISO 45001
-_ic[3].image(cfg.LOGOS_CERTIFICACION[3], width=110)  # OAA
-
 # --- Barra de usuario + Settings (en el cuerpo) ---
 if st.session_state.get("auth"):
     _u1, _u2, _u3 = st.columns([4, 1.3, 1.3])
@@ -1641,3 +1659,15 @@ _tabs = st.tabs([s[0] for s in _secciones])
 for _t, (_, _fn) in zip(_tabs, _secciones):
     with _t:
         _fn()
+
+# --- Pie de página: certificaciones de la empresa (todas las páginas) ---
+st.divider()
+st.markdown(
+    f"<p style='color:{cfg.COLOR_GRIS};margin-bottom:6px;font-family:Lato,sans-serif'>"
+    f"La empresa se encuentra <b>certificada en las normas ISO 9001, ISO 14001 e "
+    f"ISO 45001</b> y <b>acreditada por el OAA</b>.</p>", unsafe_allow_html=True)
+_fc = st.columns([1, 1, 1, 1, 6])
+_fc[0].image(cfg.LOGOS_CERTIFICACION[0], width=78)   # ISO 9001
+_fc[1].image(cfg.LOGOS_CERTIFICACION[1], width=78)   # ISO 14001
+_fc[2].image(cfg.LOGOS_CERTIFICACION[2], width=78)   # ISO 45001
+_fc[3].image(cfg.LOGOS_CERTIFICACION[3], width=108)  # OAA
