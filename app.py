@@ -1544,11 +1544,14 @@ def _pie_corporativo() -> None:
         f"<p style='color:#cbd5e1;font-size:.85rem;margin:4px 0 0 0'>"
         f"Certificada en ISO 9001, ISO 14001 e ISO 45001 · Acreditada por el OAA</p>"
         f"</div>", unsafe_allow_html=True)
-    _fc = st.columns([1, 1, 1, 1, 4])
-    _fc[0].image(cfg.LOGOS_CERTIFICACION[0], width=66)   # ISO 9001
-    _fc[1].image(cfg.LOGOS_CERTIFICACION[1], width=66)   # ISO 14001
-    _fc[2].image(cfg.LOGOS_CERTIFICACION[2], width=66)   # ISO 45001
-    _fc[3].image(cfg.LOGOS_CERTIFICACION[3], width=92)   # OAA
+    _logos = "".join(
+        f"<img src='{_img_data_uri(p)}' style='height:60px'>"
+        for p in cfg.LOGOS_CERTIFICACION[0:3])
+    _logos += (f"<img src='{_img_data_uri(cfg.LOGOS_CERTIFICACION[3])}' "
+               f"style='height:60px;margin-left:auto'>")
+    st.markdown(
+        f"<div style='display:flex;align-items:center;gap:18px;padding:10px 4px'>"
+        f"{_logos}</div>", unsafe_allow_html=True)
 
 
 def _login_gate() -> None:
