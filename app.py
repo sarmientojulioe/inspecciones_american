@@ -1514,26 +1514,56 @@ def _validar_login(nombre: str, clave: str):
     return None
 
 
+def _pie_corporativo() -> None:
+    """Pie de página corporativo (banda navy + certificaciones). Se usa en todas las vistas."""
+    st.markdown("<div style='margin-top:24px'></div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='background:#182640;border-radius:10px;padding:16px 20px;"
+        f"font-family:Lato,sans-serif'>"
+        f"<p style='color:#FFFFFF;font-weight:900;font-size:1.05rem;margin:0'>"
+        f"{cfg.EMPRESA_NOMBRE}</p>"
+        f"<p style='color:#9fd0ec;margin:0 0 6px 0'>{cfg.EMPRESA_TAGLINE}</p>"
+        f"<p style='color:#cbd5e1;font-size:.9rem;margin:0'>"
+        f"{cfg.EMPRESA_DIRECCION} · Tel: {cfg.EMPRESA_TEL} · {cfg.EMPRESA_EMAIL} · "
+        f"{cfg.EMPRESA_WEB}</p>"
+        f"<p style='color:#cbd5e1;font-size:.85rem;margin:6px 0 0 0'>"
+        f"Certificada en ISO 9001, ISO 14001 e ISO 45001 · Acreditada por el OAA</p>"
+        f"</div>", unsafe_allow_html=True)
+    _fc = st.columns([1, 1, 1, 1, 6])
+    _fc[0].image(cfg.LOGOS_CERTIFICACION[0], width=74)   # ISO 9001
+    _fc[1].image(cfg.LOGOS_CERTIFICACION[1], width=74)   # ISO 14001
+    _fc[2].image(cfg.LOGOS_CERTIFICACION[2], width=74)   # ISO 45001
+    _fc[3].image(cfg.LOGOS_CERTIFICACION[3], width=104)  # OAA
+
+
 def _login_gate() -> None:
     if st.session_state.get("auth"):
         return
-    st.subheader("Ingreso")
     try:
         usuarios = _usuarios_login()
     except Exception as exc:  # noqa: BLE001
         st.error(f"No se pudo conectar a la base: {exc}")
         st.stop()
-    with st.form("login"):
-        nombre = st.selectbox("Usuario", usuarios, index=None,
-                              placeholder="Elegí tu usuario")
-        clave = st.text_input("Contraseña", type="password")
-        if st.form_submit_button("Ingresar", type="primary"):
-            auth = _validar_login(nombre, clave) if nombre else None
-            if auth:
-                st.session_state["auth"] = auth
-                st.rerun()
-            else:
-                st.error("Usuario o contraseña incorrectos.")
+    # Formulario compacto y centrado (deja espacio a los lados para imágenes)
+    _lc1, _lc2, _lc3 = st.columns([1, 1.3, 1])
+    with _lc2:
+        st.markdown(
+            f"<h3 style='text-align:center;color:{cfg.COLOR_NAVY};"
+            f"font-family:Lato,sans-serif;margin-bottom:8px'>Ingreso</h3>",
+            unsafe_allow_html=True)
+        with st.form("login"):
+            nombre = st.selectbox("Usuario", usuarios, index=None,
+                                  placeholder="Elegí tu usuario")
+            clave = st.text_input("Contraseña", type="password")
+            if st.form_submit_button("Ingresar", type="primary",
+                                     use_container_width=True):
+                auth = _validar_login(nombre, clave) if nombre else None
+                if auth:
+                    st.session_state["auth"] = auth
+                    st.rerun()
+                else:
+                    st.error("Usuario o contraseña incorrectos.")
+    _pie_corporativo()
     st.stop()
 
 
@@ -1632,18 +1662,19 @@ if st.session_state.get("auth"):
         del st.session_state["auth"]
         st.rerun()
 
-# --- Encabezado en el cuerpo de la página (sin barra lateral) ---
-_h1, _h2 = st.columns([1.4, 4])
+# --- Encabezado: logo American (izq) · título (centro) · isologo Inspecciones (der) ---
+_h1, _h2, _h3 = st.columns([1.4, 3, 1.6])
 with _h1:
-    st.image(cfg.LOGO_AMERICAN, width=300)
+    st.image(cfg.LOGO_AMERICAN, width=270)
 with _h2:
     st.markdown(
         f"<h1 style='margin-bottom:0;font-family:Lato,sans-serif;font-weight:900;"
-        f"color:{cfg.COLOR_NAVY}'>American Advisor</h1>"
+        f"color:{cfg.COLOR_NAVY};text-align:center'>American Advisor</h1>"
         f"<p style='color:{cfg.COLOR_GRIS};font-size:1.2rem;margin-top:0;"
-        f"font-family:Lato,sans-serif'>Sistema de inspecciones de equipos</p>",
-        unsafe_allow_html=True)
-    st.image(cfg.LOGO_AREA_INSP, width=230)
+        f"text-align:center;font-family:Lato,sans-serif'>"
+        f"Sistema de inspecciones de equipos</p>", unsafe_allow_html=True)
+with _h3:
+    st.image(cfg.LOGO_AREA_INSP, use_container_width=True)
 
 st.divider()
 _login_gate()
@@ -1672,22 +1703,5 @@ for _t, (_, _fn) in zip(_tabs, _secciones):
     with _t:
         _fn()
 
-# --- Pie de página corporativo (banda navy, estilo campus) ---
-st.markdown("<div style='margin-top:24px'></div>", unsafe_allow_html=True)
-st.markdown(
-    f"<div style='background:#182640;border-radius:10px;padding:16px 20px;"
-    f"font-family:Lato,sans-serif'>"
-    f"<p style='color:#FFFFFF;font-weight:900;font-size:1.05rem;margin:0'>"
-    f"{cfg.EMPRESA_NOMBRE}</p>"
-    f"<p style='color:#9fd0ec;margin:0 0 6px 0'>{cfg.EMPRESA_TAGLINE}</p>"
-    f"<p style='color:#cbd5e1;font-size:.9rem;margin:0'>"
-    f"{cfg.EMPRESA_DIRECCION} · Tel: {cfg.EMPRESA_TEL} · {cfg.EMPRESA_EMAIL} · "
-    f"{cfg.EMPRESA_WEB}</p>"
-    f"<p style='color:#cbd5e1;font-size:.85rem;margin:6px 0 0 0'>"
-    f"Certificada en ISO 9001, ISO 14001 e ISO 45001 · Acreditada por el OAA</p>"
-    f"</div>", unsafe_allow_html=True)
-_fc = st.columns([1, 1, 1, 1, 6])
-_fc[0].image(cfg.LOGOS_CERTIFICACION[0], width=74)   # ISO 9001
-_fc[1].image(cfg.LOGOS_CERTIFICACION[1], width=74)   # ISO 14001
-_fc[2].image(cfg.LOGOS_CERTIFICACION[2], width=74)   # ISO 45001
-_fc[3].image(cfg.LOGOS_CERTIFICACION[3], width=104)  # OAA
+# --- Pie de página corporativo (banda navy + certificaciones) ---
+_pie_corporativo()
