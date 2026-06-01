@@ -115,9 +115,20 @@ def _init_esquema():
 @st.dialog("Vista previa del PDF", width="large")
 def _dialogo_pdf(data: bytes, file_name: str, label: str) -> None:
     b64 = base64.b64encode(data).decode()
-    components.html(
-        f'<iframe src="data:application/pdf;base64,{b64}" '
-        f'width="100%" height="640" style="border:none"></iframe>', height=660)
+    # Chrome bloquea PDFs incrustados vía data: URL en iframes. Se arma un blob
+    # en el navegador (blob: sí está permitido) y se carga ahí.
+    visor = """
+<iframe id="pdfv" width="100%" height="640" style="border:1px solid #ccc"></iframe>
+<script>
+  const b64 = "__B64__";
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) { arr[i] = bin.charCodeAt(i); }
+  const url = URL.createObjectURL(new Blob([arr], {type: 'application/pdf'}));
+  document.getElementById('pdfv').src = url;
+</script>
+""".replace("__B64__", b64)
+    components.html(visor, height=660)
     st.download_button(f"⬇ Descargar — {label}", data=data, file_name=file_name,
                        mime="application/pdf", use_container_width=True,
                        key=f"dlmodal_{file_name}")
