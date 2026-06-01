@@ -36,7 +36,7 @@ _BRAND_CSS = f"""
 /* Quitar el espacio superior por defecto de Streamlit (la barra navy queda arriba) */
 [data-testid="stHeader"] {{ background: transparent; height: 0; min-height: 0; }}
 [data-testid="stAppViewContainer"] > .main .block-container,
-.block-container {{ padding-top: 0 !important; }}
+.block-container {{ padding-top: 0 !important; padding-bottom: 150px !important; }}
 h1, h2, h3 {{ color: {cfg.COLOR_NAVY}; font-family: Lato, sans-serif; }}
 
 /* Pestañas: barra con fondo, activa en navy con texto blanco */
@@ -1530,10 +1530,10 @@ def _img_data_uri(path: str) -> str:
 
 def _pie_corporativo() -> None:
     """Pie de página corporativo (banda navy + certificaciones). Se usa en todas las vistas."""
-    st.markdown("<div style='margin-top:10px'></div>", unsafe_allow_html=True)
     st.markdown(
-        f"<div style='background:#182640;border-radius:10px;padding:12px 20px;"
-        f"font-family:Lato,sans-serif'>"
+        f"<div style='position:fixed;left:0;right:0;bottom:0;z-index:999;"
+        f"background:#182640;padding:10px 24px;font-family:Lato,sans-serif;"
+        f"box-shadow:0 -2px 8px rgba(0,0,0,.2)'>"
         f"<p style='color:#FFFFFF;font-weight:900;font-size:1.05rem;margin:0'>"
         f"{cfg.EMPRESA_NOMBRE}</p>"
         f"<p style='color:#9fd0ec;margin:0 0 4px 0'>{cfg.EMPRESA_TAGLINE}</p>"
