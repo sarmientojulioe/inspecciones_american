@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -500,6 +501,30 @@ def kpi_real(anio: int, mes: int) -> dict:
     return datos.kpi_actuales(anio, mes or None)
 
 
+def _gauge_cumplimiento(titulo: str, cumpl: float):
+    """Gráfico de reloj (gauge) con el % de cumplimiento de un KPI."""
+    color = "#2e7d32" if cumpl >= 100 else "#f9a825" if cumpl >= 80 else "#c62828"
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=cumpl,
+        number={"suffix": "%", "font": {"size": 26}},
+        title={"text": titulo, "font": {"size": 13}},
+        gauge={
+            "axis": {"range": [0, 150], "tickvals": [0, 50, 100, 150]},
+            "bar": {"color": color, "thickness": 0.7},
+            "steps": [
+                {"range": [0, 80], "color": "#fdecea"},
+                {"range": [80, 100], "color": "#fff8e1"},
+                {"range": [100, 150], "color": "#e8f5e9"},
+            ],
+            "threshold": {"line": {"color": "#182640", "width": 3},
+                          "thickness": 0.85, "value": 100},
+        }))
+    fig.update_layout(height=200, margin=dict(l=15, r=15, t=45, b=5),
+                      font={"family": "Lato, sans-serif"})
+    return fig
+
+
 def _seccion_cumplimiento() -> None:
     """Cumplimiento de objetivos de KPI (real vs objetivo) en el dashboard."""
     st.subheader("Cumplimiento de objetivos")
@@ -524,19 +549,27 @@ def _seccion_cumplimiento() -> None:
         return
     reales = kpi_real(anio, mes)
     filas = []
-    for key, label, tipo in KPIS:
+    cols = st.columns(len(KPIS))
+    for col, (key, label, tipo) in zip(cols, KPIS):
         objval = obj_map.get((key, mes))
         real = reales.get(key, 0)
         cumpl = None if not objval else round(real / objval * 100)
-        if cumpl is None:
-            icono = "—"
-        elif cumpl >= 100:
-            icono = "✅"
-        elif cumpl >= 80:
-            icono = "⚠️"
-        else:
-            icono = "❌"
         suf = "%" if tipo == "porcentaje" else ""
+        with col:
+            if cumpl is None:
+                st.metric(label, f"{real:g}{suf}", help="Sin objetivo cargado")
+                st.caption("Sin objetivo")
+            else:
+                st.plotly_chart(_gauge_cumplimiento(label, cumpl),
+                                use_container_width=True,
+                                key=f"gauge_{key}_{anio}_{mes}")
+                st.markdown(
+                    f"<div style='text-align:center;margin-top:-10px'>"
+                    f"<b>Real:</b> {real:g}{suf} &nbsp;·&nbsp; "
+                    f"<b>Objetivo:</b> {objval:g}{suf}</div>",
+                    unsafe_allow_html=True)
+        icono = ("—" if cumpl is None else
+                 "✅" if cumpl >= 100 else "⚠️" if cumpl >= 80 else "❌")
         filas.append({
             "Métrica": label,
             "Objetivo": f"{objval:g}{suf}" if objval is not None else "—",
@@ -545,10 +578,12 @@ def _seccion_cumplimiento() -> None:
             "Estado": icono,
         })
     tabla = pd.DataFrame(filas)
-    st.dataframe(tabla, hide_index=True, use_container_width=True)
     periodo_txt = f"{MESES[mes - 1]} {anio}" if mes else f"Año {anio}"
-    _exportar_metrica(tabla, f"cumplimiento_{anio}_{mes}",
-                      f"Cumplimiento de objetivos — {periodo_txt}", f"cmp_{anio}_{mes}")
+    with st.expander("Ver tabla / emitir informe"):
+        st.dataframe(tabla, hide_index=True, use_container_width=True)
+        _exportar_metrica(tabla, f"cumplimiento_{anio}_{mes}",
+                          f"Cumplimiento de objetivos — {periodo_txt}",
+                          f"cmp_{anio}_{mes}")
 
 
 # --------------------------------------------------------------------------- #
@@ -1073,10 +1108,13 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
     base = cached_edicion(desde, hasta)
 
     g1, g2, g3 = st.columns(3)
-    emp = g1.multiselect("Empresa", sorted(base["empresa"].dropna().unique()))
+    emp = g1.multiselect("Empresa (vacío = todas)",
+                         sorted(base["empresa"].dropna().unique()))
     insp = g2.multiselect("Inspector", sorted(base["inspector"].dropna().unique()))
     est = g3.multiselect("Estado", sorted(base["estado"].dropna().unique()))
-    oblea_q = st.text_input("Buscar por Nº de oblea", key="ed_oblea")
+    q1, q2 = st.columns(2)
+    num_q = q1.text_input("Nº de inspección", key="ed_num")
+    oblea_q = q2.text_input("Buscar por Nº de oblea", key="ed_oblea")
     f = base.copy()
     if emp:
         f = f[f["empresa"].isin(emp)]
@@ -1084,6 +1122,11 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
         f = f[f["inspector"].isin(insp)]
     if est:
         f = f[f["estado"].isin(est)]
+    if num_q.strip():
+        try:
+            f = f[f["num"] == int(num_q.strip())]
+        except ValueError:
+            st.warning("El Nº de inspección debe ser numérico.")
     if oblea_q:
         f = f[f["oblea"].fillna("").str.contains(oblea_q, case=False, na=False)]
     if f.empty:
@@ -1895,8 +1938,11 @@ def _idcli(idcliente: str):
     return int(idcliente) if str(idcliente).isdigit() else idcliente
 
 
-def _inventario_equipos(idcliente: str) -> None:
-    """Inventario fijo de equipos de la empresa (tipo, marca, capacidad, …)."""
+def _inventario_equipos(idcliente: str, ctx: str = "ficha") -> None:
+    """Inventario fijo de equipos de la empresa (tipo, marca, capacidad, …).
+
+    `ctx` distingue dónde se muestra (ficha de empresa vs pestaña Equipos) para
+    que las claves de los formularios sean únicas aunque ambos se rendericen."""
     st.markdown("#### Equipos registrados")
     if not _es_mysql():
         st.caption("El inventario de equipos sólo está disponible en producción (MySQL).")
@@ -1916,15 +1962,16 @@ def _inventario_equipos(idcliente: str) -> None:
             fmt(r.marca) if _norm(r.marca) else None,
             f"Cap. {fmt(r.capacidad)}" if _norm(r.capacidad) else None] if p)
         with st.expander("🔧 " + (partes or "Equipo")):
-            _form_equipo(idcliente, r, tipo_nombres, tipo_map, tipo_por_id)
+            _form_equipo(idcliente, r, tipo_nombres, tipo_map, tipo_por_id, ctx)
 
     with st.expander("➕ Agregar equipo"):
-        _form_equipo(idcliente, None, tipo_nombres, tipo_map, tipo_por_id)
+        _form_equipo(idcliente, None, tipo_nombres, tipo_map, tipo_por_id, ctx)
 
 
-def _form_equipo(idcliente, r, tipo_nombres, tipo_map, tipo_por_id) -> None:
+def _form_equipo(idcliente, r, tipo_nombres, tipo_map, tipo_por_id,
+                 ctx: str = "ficha") -> None:
     nuevo = r is None
-    pref = "eq_nuevo" if nuevo else f"eq_{r.id}"
+    pref = f"eq_{ctx}_{idcliente}_" + ("nuevo" if nuevo else str(r.id))
     idx_tipo = 0
     if not nuevo:
         tipo_actual = tipo_por_id.get(fmt2(r.idequipo))
@@ -1971,7 +2018,7 @@ def _form_equipo(idcliente, r, tipo_nombres, tipo_map, tipo_por_id) -> None:
 
 
 def _ficha_equipos(idcliente: str) -> None:
-    _inventario_equipos(idcliente)
+    _inventario_equipos(idcliente, ctx="ficha")
     st.markdown("#### Historial de inspecciones")
     df = rep_equipos_empresa(_idcli(idcliente))
     if df.empty:
@@ -2009,7 +2056,7 @@ def render_equipos_inv() -> None:
         st.info("Elegí una empresa para ver y cargar sus equipos.")
         return
     st.warning("Los cambios se guardan sobre la base. **Escribe en producción.**")
-    _inventario_equipos(cli_map[emp])
+    _inventario_equipos(cli_map[emp], ctx="tab")
 
 
 # --------------------------------------------------------------------------- #
@@ -2056,6 +2103,18 @@ def render_kpi() -> None:
             st.rerun()
         except Exception as exc:  # noqa: BLE001
             st.error(f"No se pudo guardar: {exc}")
+
+
+# --------------------------------------------------------------------------- #
+# Pestaña: Inspecciones (agrupa Nueva y Editar en sub-pestañas)
+# --------------------------------------------------------------------------- #
+def render_inspecciones_menu(min_f: dt.date, max_f: dt.date) -> None:
+    sub = [("Nueva", render_cargar),
+           ("Editar", lambda: render_editar(min_f, max_f))]
+    subtabs = st.tabs([s[0] for s in sub])
+    for _t, (_, _fn) in zip(subtabs, sub):
+        with _t:
+            _fn()
 
 
 # --------------------------------------------------------------------------- #
@@ -2334,8 +2393,7 @@ _secciones = [
     ("Detalle inspección", lambda: render_detalle(MIN_F, MAX_F)),
 ]
 if _puede_escribir():
-    _secciones.append(("Cargar inspección", render_cargar))
-    _secciones.append(("Editar / estado", lambda: render_editar(MIN_F, MAX_F)))
+    _secciones.append(("Inspecciones", lambda: render_inspecciones_menu(MIN_F, MAX_F)))
 _secciones.append(("Informes", render_informes))
 _secciones.append(("Formularios", render_formularios))
 if _puede_escribir() or _puede_admin_usuarios():
