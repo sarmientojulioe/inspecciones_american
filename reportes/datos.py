@@ -383,17 +383,24 @@ def usuarios_lista() -> pd.DataFrame:
 
 def usuarios_admin() -> pd.DataFrame:
     """Todos los usuarios, para la pantalla de administración."""
-    return db.run_query(
-        "SELECT IDUSUARIO AS id, NOMBRE AS nombre, EMAIL AS email, "
-        "habilitado, categoria FROM licusuario ORDER BY NOMBRE")
+    try:
+        return db.run_query(
+            "SELECT IDUSUARIO AS id, NOMBRE AS nombre, EMAIL AS email, "
+            "habilitado, categoria, rol FROM licusuario ORDER BY NOMBRE")
+    except Exception:  # noqa: BLE001 — por si la columna rol aún no existe
+        df = db.run_query(
+            "SELECT IDUSUARIO AS id, NOMBRE AS nombre, EMAIL AS email, "
+            "habilitado, categoria FROM licusuario ORDER BY NOMBRE")
+        df["rol"] = None
+        return df
 
 
-_UPD_USUARIO = ("UPDATE licusuario SET NOMBRE=?, EMAIL=?, habilitado=?, categoria=? "
-                "WHERE IDUSUARIO=?")
+_UPD_USUARIO = ("UPDATE licusuario SET NOMBRE=?, EMAIL=?, habilitado=?, categoria=?, "
+                "rol=? WHERE IDUSUARIO=?")
 
 
 def actualizar_usuarios(cambios: list[dict]) -> int:
-    """Actualiza nombre/email/habilitado/categoria de usuarios. Escribe en producción."""
+    """Actualiza nombre/email/habilitado/categoria/rol. Escribe en producción."""
     afectadas = 0
     with db.get_connection() as conn:
         cur = conn.cursor()
@@ -401,7 +408,7 @@ def actualizar_usuarios(cambios: list[dict]) -> int:
             for c in cambios:
                 cur.execute(db.adapt(_UPD_USUARIO), [
                     c.get("nombre"), c.get("email"), int(c.get("habilitado", 1)),
-                    c.get("categoria"), c["id"]])
+                    c.get("categoria"), c.get("rol"), c["id"]])
                 afectadas += cur.rowcount
             conn.commit()
             return afectadas
@@ -425,7 +432,7 @@ def cambiar_password(idusuario: str, nueva: str) -> int:
 
 
 def agregar_usuario(nombre: str, password: str, email: str | None,
-                    categoria: str | None) -> str:
+                    categoria: str | None, rol: str | None = None) -> str:
     """Crea un usuario nuevo (IDUSUARIO = MAX+1 a 5 dígitos). Devuelve el id."""
     import datetime as _dt
     with db.get_connection() as conn:
@@ -436,8 +443,8 @@ def agregar_usuario(nombre: str, password: str, email: str | None,
             idusr = str(int(cur.fetchone()[0])).zfill(5)
             cur.execute(db.adapt(
                 "INSERT INTO licusuario (IDUSUARIO, NOMBRE, PASSWORD, EMAIL, habilitado, "
-                "categoria, FECHAALTA) VALUES (?,?,?,?,?,?,?)"),
-                [idusr, nombre, password, email, 1, categoria, _dt.date.today()])
+                "categoria, rol, FECHAALTA) VALUES (?,?,?,?,?,?,?,?)"),
+                [idusr, nombre, password, email, 1, categoria, rol, _dt.date.today()])
             conn.commit()
             return idusr
         except Exception:
@@ -775,6 +782,25 @@ def asegurar_esquema_fotos() -> None:
         try:
             cur.execute(_DDL_INFORME_FOTO)
             cur.execute(_DDL_FOTO_LEYENDA)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def asegurar_esquema_roles() -> None:
+    """Agrega la columna licusuario.rol si no existe. Solo en MySQL (producción)."""
+    if db.ENGINE != "mysql":
+        return
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'licusuario' "
+                "AND column_name = 'rol'")
+            if int(cur.fetchone()[0]) == 0:
+                cur.execute("ALTER TABLE licusuario ADD COLUMN rol VARCHAR(30) NULL")
             conn.commit()
         except Exception:
             conn.rollback()

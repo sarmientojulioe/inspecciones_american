@@ -74,6 +74,37 @@ EQ_SUMMARY = ["equipo", "marca", "modelo", "serie", "matricula", "oblea",
               "resultado", "vto_inspeccion", "inspector"]
 BOOL_COLS = {"acredita_oaa", "verificacion_final"}
 
+# Roles de usuario y permisos
+ROLES = ["Administrador", "Gerente Técnico", "Inspector", "Gerente", "Comercial"]
+ROL_DEFECTO = "Administrador"          # usuarios sin rol asignado (acceso total)
+ROLES_ESCRIBEN = {"Administrador", "Gerente Técnico", "Inspector"}
+ROLES_ADMIN_USUARIOS = {"Administrador", "Gerente Técnico"}
+
+
+def _rol_actual() -> str:
+    auth = st.session_state.get("auth") or {}
+    return auth.get("rol") or ROL_DEFECTO
+
+
+def _puede_escribir() -> bool:
+    """Cargar / editar inspecciones, fotos y datos."""
+    return _rol_actual() in ROLES_ESCRIBEN
+
+
+def _puede_admin_usuarios() -> bool:
+    return _rol_actual() in ROLES_ADMIN_USUARIOS
+
+
+@st.cache_resource
+def _init_esquema():
+    """Crea tablas de fotos/leyendas y la columna rol si faltan (una vez por proceso)."""
+    for fn in (datos.asegurar_esquema_fotos, datos.asegurar_esquema_roles):
+        try:
+            fn()
+        except Exception:  # noqa: BLE001
+            pass  # no bloquear la app si no se pudo (p. ej. permisos)
+    return True
+
 
 # --------------------------------------------------------------------------- #
 # Acceso a datos (cacheado)
@@ -407,59 +438,70 @@ def _bloque_fotos(idd: int, num: int) -> None:
         f"📷 Fotos del Informe Preliminar ({n_guard} guardada(s))",
         key=f"chk_fotos_{idd}")
     if abrir:
-        leyendas = cat_leyendas()
         guardadas = fotos_cached(idd)
-
-        c_cam, c_up = st.columns(2)
-        cam = c_cam.camera_input("Sacar foto (cámara del celular)", key=f"cam_{idd}")
-        subidas = c_up.file_uploader(
-            "Subir fotos (hasta 4 en total)", type=["png", "jpg", "jpeg"],
-            accept_multiple_files=True, key=f"up_{idd}")
-
-        # Conjunto de trabajo: fotos guardadas + nuevas (cámara/subidas), tope 4
-        trabajo = [{"imagen": g["imagen"], "leyenda": g.get("leyenda", ""), "src": f"g{i}"}
-                   for i, g in enumerate(guardadas)]
-        if cam is not None:
-            trabajo.append({"imagen": cam.getvalue(), "leyenda": "", "src": "cam"})
-        for j, f in enumerate(subidas or []):
-            trabajo.append({"imagen": f.getvalue(), "leyenda": "", "src": f"up{j}"})
-        trabajo = trabajo[:4]
-
-        opciones = [""] + leyendas
-        final = []
-        if trabajo:
-            cols = st.columns(2)
-            for k, it in enumerate(trabajo):
-                with cols[k % 2]:
-                    st.image(it["imagen"], use_container_width=True)
-                    idx = opciones.index(it["leyenda"]) if it["leyenda"] in opciones else 0
-                    ley = st.selectbox("Leyenda", opciones, index=idx,
-                                       key=f"ley_{idd}_{it['src']}")
-                    quitar = st.checkbox("Quitar", key=f"quit_{idd}_{it['src']}")
-                    if not quitar:
-                        final.append({"imagen": it["imagen"], "leyenda": ley})
-
-        # Agregar una leyenda nueva al catálogo (cualquier usuario)
-        nl1, nl2 = st.columns([4, 1])
-        nueva_ley = nl1.text_input(
-            "Nueva leyenda", key=f"nl_{idd}", label_visibility="collapsed",
-            placeholder="Agregar leyenda nueva al catálogo…")
-        if nl2.button("➕ Leyenda", key=f"addley_{idd}", use_container_width=True):
-            if datos.agregar_leyenda(nueva_ley):
-                st.cache_data.clear()
-                st.success("Leyenda agregada al catálogo.")
-                st.rerun()
+        if not _puede_escribir():
+            # Solo lectura: ver las fotos guardadas (sin editar)
+            if guardadas:
+                cols = st.columns(2)
+                for k, g in enumerate(guardadas):
+                    with cols[k % 2]:
+                        st.image(g["imagen"], use_container_width=True)
+                        if g.get("leyenda"):
+                            st.caption(g["leyenda"])
             else:
-                st.info("La leyenda está vacía o ya existe.")
+                st.caption("Sin fotos cargadas.")
+        else:
+            leyendas = cat_leyendas()
+            c_cam, c_up = st.columns(2)
+            cam = c_cam.camera_input("Sacar foto (cámara del celular)", key=f"cam_{idd}")
+            subidas = c_up.file_uploader(
+                "Subir fotos (hasta 4 en total)", type=["png", "jpg", "jpeg"],
+                accept_multiple_files=True, key=f"up_{idd}")
 
-        if st.button("💾 Guardar fotos", type="primary", key=f"savef_{idd}"):
-            try:
-                datos.guardar_fotos(idd, final)
-                st.cache_data.clear()
-                st.success(f"{len(final)} foto(s) guardada(s).")
-                st.rerun()
-            except Exception as exc:  # noqa: BLE001
-                st.error(f"No se pudo guardar: {exc}")
+            # Conjunto de trabajo: fotos guardadas + nuevas (cámara/subidas), tope 4
+            trabajo = [{"imagen": g["imagen"], "leyenda": g.get("leyenda", ""), "src": f"g{i}"}
+                       for i, g in enumerate(guardadas)]
+            if cam is not None:
+                trabajo.append({"imagen": cam.getvalue(), "leyenda": "", "src": "cam"})
+            for j, f in enumerate(subidas or []):
+                trabajo.append({"imagen": f.getvalue(), "leyenda": "", "src": f"up{j}"})
+            trabajo = trabajo[:4]
+
+            opciones = [""] + leyendas
+            final = []
+            if trabajo:
+                cols = st.columns(2)
+                for k, it in enumerate(trabajo):
+                    with cols[k % 2]:
+                        st.image(it["imagen"], use_container_width=True)
+                        idx = opciones.index(it["leyenda"]) if it["leyenda"] in opciones else 0
+                        ley = st.selectbox("Leyenda", opciones, index=idx,
+                                           key=f"ley_{idd}_{it['src']}")
+                        quitar = st.checkbox("Quitar", key=f"quit_{idd}_{it['src']}")
+                        if not quitar:
+                            final.append({"imagen": it["imagen"], "leyenda": ley})
+
+            # Agregar una leyenda nueva al catálogo
+            nl1, nl2 = st.columns([4, 1])
+            nueva_ley = nl1.text_input(
+                "Nueva leyenda", key=f"nl_{idd}", label_visibility="collapsed",
+                placeholder="Agregar leyenda nueva al catálogo…")
+            if nl2.button("➕ Leyenda", key=f"addley_{idd}", use_container_width=True):
+                if datos.agregar_leyenda(nueva_ley):
+                    st.cache_data.clear()
+                    st.success("Leyenda agregada al catálogo.")
+                    st.rerun()
+                else:
+                    st.info("La leyenda está vacía o ya existe.")
+
+            if st.button("💾 Guardar fotos", type="primary", key=f"savef_{idd}"):
+                try:
+                    datos.guardar_fotos(idd, final)
+                    st.cache_data.clear()
+                    st.success(f"{len(final)} foto(s) guardada(s).")
+                    st.rerun()
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"No se pudo guardar: {exc}")
 
     if n_guard:
         st.download_button(
@@ -607,6 +649,9 @@ def render_detalle(min_f: dt.date, max_f: dt.date) -> None:
 # --------------------------------------------------------------------------- #
 def render_cargar() -> None:
     st.subheader("Cargar una inspección nueva")
+    if not _puede_escribir():
+        st.error("No tenés permisos para cargar inspecciones.")
+        return
 
     ultima = st.session_state.get("ultima_creada")
     if ultima:
@@ -813,6 +858,9 @@ EDIT_COLS = ["Oblea", "Marca", "N° Serie", "Matrícula", "Vto. inspección",
 
 def render_editar(min_f: dt.date, max_f: dt.date) -> None:
     st.subheader("Editar inspecciones (estado y datos clave)")
+    if not _puede_escribir():
+        st.error("No tenés permisos para editar inspecciones.")
+        return
     st.warning("Los cambios se guardan en la **base de producción**.")
 
     f1, f2 = st.columns(2)
@@ -1071,59 +1119,70 @@ def _ficha_inspeccion(row) -> None:
     i2.write(f"**Empresa:** {row['empresa'] or ''}")
     i3.write(f"**Equipo:** {row['equipo'] or ''}")
 
-    res2 = cat_tiposresultado2()
-    nombre2id = {r.nombre: r.id for r in res2.itertuples()}
-    estado_opts = [n for n in ("Pendiente", "Favorable", "Desfavorable") if n in nombre2id]
     cur_estado = row["estado"] or ""
-    if cur_estado and cur_estado not in estado_opts:
-        estado_opts.append(cur_estado)
-    usuarios = cat_usuarios()
-    name2id = {r.nombre: r.id for r in usuarios.itertuples()}
-    insp_opts = [""] + list(usuarios["nombre"])
-    cur_insp = row["inspector"] or ""
+    if not _puede_escribir():
+        ro = {
+            "Estado": cur_estado, "Inspector": row["inspector"] or "",
+            "Oblea": row["oblea"] or "", "Marca": row["marca"] or "",
+            "N° Serie": row["serie"] or "", "Matrícula": row["matricula"] or "",
+            "Vto. inspección": row["vto"].strftime("%d/%m/%Y") if pd.notna(row["vto"]) else "",
+            "Observaciones": row["obs"] or "",
+        }
+        st.dataframe(pd.DataFrame({"Campo": list(ro), "Valor": list(ro.values())}),
+                     hide_index=True, use_container_width=True)
+    else:
+        res2 = cat_tiposresultado2()
+        nombre2id = {r.nombre: r.id for r in res2.itertuples()}
+        estado_opts = [n for n in ("Pendiente", "Favorable", "Desfavorable") if n in nombre2id]
+        if cur_estado and cur_estado not in estado_opts:
+            estado_opts.append(cur_estado)
+        usuarios = cat_usuarios()
+        name2id = {r.nombre: r.id for r in usuarios.itertuples()}
+        insp_opts = [""] + list(usuarios["nombre"])
+        cur_insp = row["inspector"] or ""
 
-    with st.form(f"ficha_{idd}"):
-        c1, c2 = st.columns(2)
-        estado = c1.selectbox("Estado", estado_opts,
-                              index=estado_opts.index(cur_estado) if cur_estado in estado_opts else 0)
-        inspector = c2.selectbox("Inspector", insp_opts,
-                                 index=insp_opts.index(cur_insp) if cur_insp in insp_opts else 0)
-        c3, c4 = st.columns(2)
-        oblea = c3.text_input("Oblea", value=row["oblea"] or "")
-        marca = c4.text_input("Marca", value=row["marca"] or "")
-        c5, c6 = st.columns(2)
-        serie = c5.text_input("N° Serie", value=row["serie"] or "")
-        matricula = c6.text_input("Matrícula", value=row["matricula"] or "")
-        vto_default = row["vto"].date() if pd.notna(row["vto"]) else None
-        vto = st.date_input("Vto. inspección", value=vto_default, format="DD/MM/YYYY")
-        obs = st.text_area("Observaciones", value=row["obs"] or "")
-        confirmar = st.checkbox("Confirmo guardar los cambios en la base de producción")
-        guardar = st.form_submit_button("Guardar cambios", type="primary")
+        with st.form(f"ficha_{idd}"):
+            c1, c2 = st.columns(2)
+            estado = c1.selectbox("Estado", estado_opts,
+                                  index=estado_opts.index(cur_estado) if cur_estado in estado_opts else 0)
+            inspector = c2.selectbox("Inspector", insp_opts,
+                                     index=insp_opts.index(cur_insp) if cur_insp in insp_opts else 0)
+            c3, c4 = st.columns(2)
+            oblea = c3.text_input("Oblea", value=row["oblea"] or "")
+            marca = c4.text_input("Marca", value=row["marca"] or "")
+            c5, c6 = st.columns(2)
+            serie = c5.text_input("N° Serie", value=row["serie"] or "")
+            matricula = c6.text_input("Matrícula", value=row["matricula"] or "")
+            vto_default = row["vto"].date() if pd.notna(row["vto"]) else None
+            vto = st.date_input("Vto. inspección", value=vto_default, format="DD/MM/YYYY")
+            obs = st.text_area("Observaciones", value=row["obs"] or "")
+            confirmar = st.checkbox("Confirmo guardar los cambios en la base de producción")
+            guardar = st.form_submit_button("Guardar cambios", type="primary")
 
-    if guardar:
-        if not confirmar:
-            st.warning("Tildá la confirmación para guardar.")
-        else:
-            cambio = dict(
-                idd=idd, oblea=_norm(oblea), marca=_norm(marca), serie=_norm(serie),
-                matricula=_norm(matricula),
-                vto=None if (vto is None or pd.isna(vto)) else vto,
-                idresultado=nombre2id.get(estado),
-                idusuario=name2id.get(inspector) if inspector else None,
-                obs=_norm(obs))
-            en_uso = datos.obleas_en_uso([cambio["oblea"]] if cambio["oblea"] else [], [idd])
-            if not en_uso.empty:
-                detalle = "; ".join(f"{r.oblea} (ya usada en Nº {int(r.num)} - {r.empresa})"
-                                    for r in en_uso.itertuples())
-                st.error("La oblea ya está en uso en otra inspección: " + detalle)
+        if guardar:
+            if not confirmar:
+                st.warning("Tildá la confirmación para guardar.")
             else:
-                try:
-                    datos.actualizar_informes([cambio], dry_run=False)
-                    st.cache_data.clear()
-                    st.success("Cambios guardados.")
-                    st.rerun()
-                except Exception as exc:  # noqa: BLE001
-                    st.error(f"No se pudo guardar: {exc}")
+                cambio = dict(
+                    idd=idd, oblea=_norm(oblea), marca=_norm(marca), serie=_norm(serie),
+                    matricula=_norm(matricula),
+                    vto=None if (vto is None or pd.isna(vto)) else vto,
+                    idresultado=nombre2id.get(estado),
+                    idusuario=name2id.get(inspector) if inspector else None,
+                    obs=_norm(obs))
+                en_uso = datos.obleas_en_uso([cambio["oblea"]] if cambio["oblea"] else [], [idd])
+                if not en_uso.empty:
+                    detalle = "; ".join(f"{r.oblea} (ya usada en Nº {int(r.num)} - {r.empresa})"
+                                        for r in en_uso.itertuples())
+                    st.error("La oblea ya está en uso en otra inspección: " + detalle)
+                else:
+                    try:
+                        datos.actualizar_informes([cambio], dry_run=False)
+                        st.cache_data.clear()
+                        st.success("Cambios guardados.")
+                        st.rerun()
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"No se pudo guardar: {exc}")
 
     st.markdown("**Documentos**")
     d1, d2 = st.columns(2)
@@ -1265,28 +1324,37 @@ def render_informes() -> None:
 # --------------------------------------------------------------------------- #
 def render_usuarios() -> None:
     st.subheader("Usuarios")
-    st.warning("Cambios sobre los usuarios del sistema (login e inspectores).")
+    if not _puede_admin_usuarios():
+        st.error("No tenés permisos para administrar usuarios.")
+        return
+    st.warning("Cambios sobre los usuarios del sistema (login, rol e inspectores).")
     base = cat_usuarios_admin()
 
+    roles_col = base["rol"].fillna("").replace("", ROL_DEFECTO).values
     ed = pd.DataFrame({
         "id": base["id"].values,
         "Usuario": base["nombre"].fillna("").values,
         "Email": base["email"].fillna("").values,
+        "Rol": roles_col,
         "Habilitado": (base["habilitado"] == 1).values,
         "Categoría": base["categoria"].fillna("").values,
     })
     original = ed.copy()
     edited = st.data_editor(
         ed, hide_index=True, use_container_width=True, key="editor_users",
-        column_order=["Usuario", "Email", "Habilitado", "Categoría"],
+        column_order=["Usuario", "Email", "Rol", "Habilitado", "Categoría"],
         column_config={
             "Usuario": st.column_config.TextColumn(required=True),
+            "Rol": st.column_config.SelectboxColumn(
+                options=ROLES, required=True,
+                help="Inspector y Gerente Técnico cargan/editan inspecciones. "
+                     "Administrador y Gerente Técnico administran usuarios."),
             "Habilitado": st.column_config.CheckboxColumn(
                 help="Destildá para deshabilitar (no puede iniciar sesión ni ser inspector)"),
             "Categoría": st.column_config.TextColumn(max_chars=1),
         })
     if st.button("Guardar usuarios", type="primary"):
-        ucols = ["Usuario", "Email", "Habilitado", "Categoría"]
+        ucols = ["Usuario", "Email", "Rol", "Habilitado", "Categoría"]
         cambios = []
         for i in range(len(edited)):
             nue, vie = edited.iloc[i], original.iloc[i]
@@ -1295,7 +1363,7 @@ def render_usuarios() -> None:
                     id=str(nue["id"]), nombre=_norm(nue["Usuario"]),
                     email=_norm(nue["Email"]),
                     habilitado=1 if bool(nue["Habilitado"]) else 0,
-                    categoria=_norm(nue["Categoría"])))
+                    categoria=_norm(nue["Categoría"]), rol=_norm(nue["Rol"])))
         if not cambios:
             st.info("No hay cambios para guardar.")
         else:
@@ -1329,13 +1397,14 @@ def render_usuarios() -> None:
         n_pass = st.text_input("Contraseña", type="password", max_chars=10, key="nu_pass")
         n_email = st.text_input("Email", max_chars=50, key="nu_email")
         n_cat = st.text_input("Categoría (1 letra)", max_chars=1, key="nu_cat")
+        n_rol = st.selectbox("Rol", ROLES, index=ROLES.index("Inspector"), key="nu_rol")
         if st.button("Crear usuario"):
             if not _norm(n_nombre) or not _norm(n_pass):
                 st.warning("Nombre y contraseña son obligatorios.")
             else:
                 try:
                     idu = datos.agregar_usuario(n_nombre.strip(), n_pass.strip(),
-                                                _norm(n_email), _norm(n_cat))
+                                                _norm(n_email), _norm(n_cat), n_rol)
                     st.cache_data.clear()
                     st.success(f"Usuario creado (id {idu}).")
                     st.rerun()
@@ -1379,13 +1448,21 @@ def _usuarios_login() -> list[str]:
 
 
 def _validar_login(nombre: str, clave: str):
-    df = db.run_query("SELECT IDUSUARIO, NOMBRE, PASSWORD FROM licusuario "
-                      "WHERE NOMBRE = ? AND habilitado = 1", [nombre])
+    try:
+        df = db.run_query("SELECT IDUSUARIO, NOMBRE, PASSWORD, rol FROM licusuario "
+                          "WHERE NOMBRE = ? AND habilitado = 1", [nombre])
+    except Exception:  # noqa: BLE001 — por si la columna rol aún no existe
+        df = db.run_query("SELECT IDUSUARIO, NOMBRE, PASSWORD FROM licusuario "
+                          "WHERE NOMBRE = ? AND habilitado = 1", [nombre])
+        if not df.empty:
+            df["rol"] = None
     if df.empty:
         return None
     r = df.iloc[0]
     if clave.strip() != "" and str(r["PASSWORD"]).strip() == clave.strip():
-        return {"id": str(r["IDUSUARIO"]).strip(), "nombre": r["NOMBRE"]}
+        rol = (str(r["rol"]).strip() if r["rol"] is not None and str(r["rol"]).strip()
+               else ROL_DEFECTO)
+        return {"id": str(r["IDUSUARIO"]).strip(), "nombre": r["NOMBRE"], "rol": rol}
     return None
 
 
@@ -1418,7 +1495,7 @@ def _login_gate() -> None:
 st.sidebar.title("Inspecciones de equipos")
 st.sidebar.caption(db.descripcion())
 if st.session_state.get("auth"):
-    st.sidebar.caption(f"Sesión: {st.session_state['auth']['nombre']}")
+    st.sidebar.caption(f"Sesión: {st.session_state['auth']['nombre']} · {_rol_actual()}")
     if st.sidebar.button("Cerrar sesión"):
         del st.session_state["auth"]
         st.rerun()
@@ -1451,20 +1528,10 @@ with _hcol2:
 with _hcol3:
     st.image(cfg.LOGO_AREA_INSP, use_container_width=True)
 
+# El esquema (columna rol, tablas de fotos) debe existir ANTES del login,
+# porque _validar_login consulta licusuario.rol.
+_init_esquema()
 _login_gate()
-
-
-@st.cache_resource
-def _init_esquema_fotos():
-    """Crea las tablas de fotos/leyendas si faltan (una vez por proceso)."""
-    try:
-        datos.asegurar_esquema_fotos()
-    except Exception:  # noqa: BLE001
-        pass  # no bloquear la app si no se pudo crear (p. ej. permisos)
-    return True
-
-
-_init_esquema_fotos()
 
 try:
     MIN_F, MAX_F = rango()
@@ -1472,19 +1539,20 @@ except Exception as exc:  # noqa: BLE001
     st.error(f"No se pudo conectar a la base: {exc}")
     st.stop()
 
-tabs = st.tabs(["Inspecciones", "Detalle inspección", "Cargar inspección",
-                "Editar / estado", "Informes", "Formularios", "Usuarios"])
-with tabs[0]:
-    render_inspecciones(MIN_F, MAX_F)
-with tabs[1]:
-    render_detalle(MIN_F, MAX_F)
-with tabs[2]:
-    render_cargar()
-with tabs[3]:
-    render_editar(MIN_F, MAX_F)
-with tabs[4]:
-    render_informes()
-with tabs[5]:
-    render_formularios()
-with tabs[6]:
-    render_usuarios()
+# Pestañas según el rol del usuario (ver ROLES / permisos)
+_secciones = [
+    ("Inspecciones", lambda: render_inspecciones(MIN_F, MAX_F)),
+    ("Detalle inspección", lambda: render_detalle(MIN_F, MAX_F)),
+]
+if _puede_escribir():
+    _secciones.append(("Cargar inspección", render_cargar))
+    _secciones.append(("Editar / estado", lambda: render_editar(MIN_F, MAX_F)))
+_secciones.append(("Informes", render_informes))
+_secciones.append(("Formularios", render_formularios))
+if _puede_admin_usuarios():
+    _secciones.append(("Usuarios", render_usuarios))
+
+_tabs = st.tabs([s[0] for s in _secciones])
+for _t, (_, _fn) in zip(_tabs, _secciones):
+    with _t:
+        _fn()
