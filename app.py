@@ -889,33 +889,31 @@ def render_detalle(min_f: dt.date, max_f: dt.date) -> None:
 # Filtros incrementales reutilizables (por varios criterios)
 # --------------------------------------------------------------------------- #
 def _filtro_equipos(df: pd.DataFrame, key: str) -> pd.DataFrame:
-    """Filtra una lista de tipos de equipo por descripción (texto) y norma IRAM."""
-    c1, c2 = st.columns([2, 1])
-    txt = c1.text_input("Filtrar equipo", key=f"{key}_ftxt",
-                        placeholder="Parte de la descripción…")
+    """Pre-filtra los tipos de equipo por norma IRAM (un clic). La búsqueda por
+    descripción la hace el propio desplegable al tipear (incremental, sin Enter)."""
     normas = ["(todas las normas)"] + sorted(
         {n for n in df["norma"].dropna().astype("string").str.strip() if n})
-    norma = c2.selectbox("Norma IRAM", normas, key=f"{key}_fnorma")
-    f = df
-    if _norm(txt):
-        f = f[f["nombre"].fillna("").str.contains(txt.strip(), case=False, na=False)]
+    norma = st.selectbox("Norma IRAM (filtro)", normas, key=f"{key}_fnorma")
     if norma != "(todas las normas)":
-        f = f[f["norma"].astype("string").str.strip() == norma]
-    return f
+        df = df[df["norma"].astype("string").str.strip() == norma]
+    return df
 
 
 def _selector_empresa(key: str, label: str = "Empresa"):
-    """Filtro por razón social / CUIT + selector. Devuelve (idcliente, etiqueta) o (None, None)."""
-    txt = st.text_input(f"Filtrar {label.lower()} (razón social o CUIT)",
-                        key=f"{key}_filtro", placeholder="Escribí para filtrar…")
-    clientes = datos.buscar_clientes(txt, limite=10000)
-    cli_map = {r.razon_social: str(r.id) for r in clientes.itertuples()}
-    if not cli_map:
-        st.info("No hay empresas para ese filtro.")
+    """Selector de empresa con razón social + CUIT en la etiqueta, para que el
+    desplegable filtre al tipear cualquiera de los dos. Devuelve (idcliente, etiqueta)."""
+    base = cat_clientes_admin()
+    opts = {}
+    for r in base.itertuples():
+        etq = fmt2(r.razon_social) + (f"  ·  CUIT {fmt2(r.cuit)}"
+                                      if _norm(r.cuit) else "")
+        opts[etq] = str(r.id)
+    if not opts:
+        st.info("No hay empresas cargadas.")
         return None, None
-    lbl = st.selectbox(label, list(cli_map), index=None,
-                       placeholder="Elegí la empresa…", key=f"{key}_sel")
-    return (cli_map[lbl], lbl) if lbl else (None, None)
+    lbl = st.selectbox(label, list(opts), index=None,
+                       placeholder="Escribí razón social o CUIT…", key=f"{key}_sel")
+    return (opts[lbl], lbl) if lbl else (None, None)
 
 
 # --------------------------------------------------------------------------- #
