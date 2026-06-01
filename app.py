@@ -36,7 +36,7 @@ _BRAND_CSS = f"""
 /* Quitar el espacio superior por defecto de Streamlit (la barra navy queda arriba) */
 [data-testid="stHeader"] {{ background: transparent; height: 0; min-height: 0; }}
 [data-testid="stAppViewContainer"] > .main .block-container,
-.block-container {{ padding-top: 0.3rem !important; }}
+.block-container {{ padding-top: 0 !important; }}
 h1, h2, h3 {{ color: {cfg.COLOR_NAVY}; font-family: Lato, sans-serif; }}
 
 /* Pestañas: barra con fondo, activa en navy con texto blanco */
@@ -1646,15 +1646,16 @@ _init_esquema()
 
 # --- Barra superior corporativa (navy) + línea de gradiente (estilo campus) ---
 st.markdown(
-    "<div style='background:#182640;color:#cbd5e1;font-family:Lato,sans-serif;"
-    "padding:6px 16px;border-radius:6px;display:flex;justify-content:space-between;"
-    "flex-wrap:wrap;gap:6px;font-size:.72rem;letter-spacing:.04em;"
-    "text-transform:uppercase'>"
+    "<div style='background:#182640;color:#e8eef6;font-family:Lato,sans-serif;"
+    "padding:14px 22px;margin:0 0 0 0;display:flex;justify-content:space-between;"
+    "align-items:center;flex-wrap:wrap;gap:8px;font-size:1rem;font-weight:700;"
+    "letter-spacing:.03em;text-transform:uppercase'>"
     f"<span>{cfg.EMPRESA_NOMBRE} · Inspecciones y Certificaciones, Capacitación "
     "y Medicina Integral Laboral</span>"
-    "<span>Trinorma ISO 9001 · 14001 · 45001 — Acreditada OAA</span></div>"
-    "<div style='height:4px;background:linear-gradient(90deg,#50a5d9,#2884c7,#22355b);"
-    "border-radius:3px;margin:4px 0 12px 0'></div>", unsafe_allow_html=True)
+    "<span style='font-size:.85rem;color:#9fd0ec'>"
+    "Trinorma ISO 9001 · 14001 · 45001 — Acreditada OAA</span></div>"
+    "<div style='height:5px;background:linear-gradient(90deg,#50a5d9,#2884c7,#22355b);"
+    "margin:0 0 14px 0'></div>", unsafe_allow_html=True)
 
 # --- Barra de usuario arriba a la derecha: nombre · rol, menú ⋮ (settings) y salir ---
 if st.session_state.get("auth"):
