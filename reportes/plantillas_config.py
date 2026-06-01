@@ -48,8 +48,7 @@ LOGOS_CERTIFICACION = [
 EMPRESA_NOMBRE = "American Advisor"
 EMPRESA_TAGLINE = "Asesoramiento, Capacitación y Medicina Integral Laboral"
 EMPRESA_DIRECCION = "Pasteur Oeste 256, Rawson, San Juan"
-EMPRESA_MAPS = ("https://www.google.com/maps/search/?api=1&query="
-                "Pasteur+Oeste+256,+Rawson,+San+Juan")
+EMPRESA_MAPS = "https://maps.app.goo.gl/g4sAmgveJyjN1v698"
 EMPRESA_TEL = "+54 264 428 7809"
 EMPRESA_EMAIL = "recepcion@americanad.com.ar"
 EMPRESA_WEB = "www.americanad.com.ar"
