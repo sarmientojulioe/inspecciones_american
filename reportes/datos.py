@@ -614,6 +614,92 @@ def eliminar_equipo_empresa(id_eq) -> int:
             raise
 
 
+def _strip_or_none(v):
+    if v is None:
+        return None
+    try:
+        if pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    s = str(v).strip()
+    return s or None
+
+
+def importar_equipos_desde_inspecciones(dry_run: bool = False) -> dict:
+    """Asigna a cada empresa los equipos de sus inspecciones que tengan
+    Nº de serie o matrícula (tipo, marca, capacidad, modelo, serie, año).
+
+    Evita duplicados: omite los que ya existan en equipo_empresa para esa
+    empresa con la misma serie/matrícula. Solo MySQL.
+    dry_run=True -> no inserta; devuelve el conteo para previsualizar.
+    """
+    if db.ENGINE != "mysql":
+        raise RuntimeError("Disponible solo en producción (MySQL).")
+    src = db.run_query(
+        "SELECT s.IDCLIENTE AS idcliente, d.IDEQUIPO AS idequipo, "
+        "ip.MARCA_EQUIPO AS marca, ip.CAPAC_MAX_ELEVA AS capacidad, "
+        "ip.MODELO_EQUIPO AS modelo, ip.SERIE_EQUIPO AS serie, "
+        "ip.MATRICULA_EQUIPO AS matricula, ip.anio_fabrica AS anio "
+        "FROM solicitud_servicio s "
+        "JOIN solicitud_servicio_det d ON d.IDSOLICITUD = s.IDSOLICITUD "
+        "JOIN informe_preliminar ip ON ip.IDSOLICITUDDETALLE = d.IDSOLICITUDDETALLE "
+        "WHERE s.IDSERVICIO = 1 AND s.ACTIVO = 1 "
+        "AND ((ip.SERIE_EQUIPO IS NOT NULL AND ip.SERIE_EQUIPO <> '') "
+        "  OR (ip.MATRICULA_EQUIPO IS NOT NULL AND ip.MATRICULA_EQUIPO <> ''))")
+
+    existentes = db.run_query("SELECT idcliente, serie FROM equipo_empresa")
+    ya = {(str(r.idcliente).strip(),
+           (str(r.serie).strip().lower() if r.serie is not None else ""))
+          for r in existentes.itertuples()}
+
+    candidatos = 0
+    omitidos = 0
+    vistos: set = set()
+    nuevos: list[dict] = []
+    for r in src.itertuples():
+        serie = _strip_or_none(r.serie) or _strip_or_none(r.matricula)
+        if not serie:
+            continue
+        candidatos += 1
+        key = (str(r.idcliente).strip(), serie.lower())
+        if key in ya or key in vistos:
+            omitidos += 1
+            continue
+        vistos.add(key)
+        nuevos.append({
+            "idcliente": str(r.idcliente).strip(),
+            "idequipo": _strip_or_none(r.idequipo),
+            "marca": _strip_or_none(r.marca),
+            "capacidad": _strip_or_none(r.capacidad),
+            "modelo": _strip_or_none(r.modelo),
+            "serie": serie,
+            "anio": _strip_or_none(r.anio),
+        })
+
+    resultado = {"candidatos": candidatos, "a_insertar": len(nuevos),
+                 "omitidos": omitidos, "insertados": 0}
+    if dry_run or not nuevos:
+        return resultado
+
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            for d in nuevos:
+                cur.execute(db.adapt(
+                    "INSERT INTO equipo_empresa "
+                    "(idcliente, idequipo, marca, capacidad, modelo, serie, "
+                    " anio_fabrica, fechaalta) VALUES (?,?,?,?,?,?,?,?)"),
+                    [d["idcliente"], d["idequipo"], d["marca"], d["capacidad"],
+                     d["modelo"], d["serie"], d["anio"], dt.datetime.now()])
+            conn.commit()
+            resultado["insertados"] = len(nuevos)
+            return resultado
+        except Exception:
+            conn.rollback()
+            raise
+
+
 # --------------------------------------------------------------------------- #
 # KPI y Objetivos: metas por KPI/año/mes (mes=0 => objetivo anual) + valores reales
 # --------------------------------------------------------------------------- #
@@ -1079,6 +1165,165 @@ def checklist_equipo(idequipo) -> pd.DataFrame:
         "JOIN hojacampo_item i ON i.iditem = h.ITEM "
         "WHERE h.IDEQUIPO = ? AND h.ACTIVO = 1 "
         "ORDER BY g.DESCRIPCION, i.descripcion", [idequipo])
+
+
+# --------------------------------------------------------------------------- #
+# Editor del checklist (hoja de campo) por tipo de equipo.
+# Tablas legadas: hojacampo (cruce IDEQUIPO-IDGRUPO-ITEM), hojacampo_grupo,
+# hojacampo_item. Escritura DEFENSIVA: detecta PK / auto_increment / columnas
+# NOT NULL para no romper por constraints. Bajas LÓGICAS (ACTIVO=0).
+# --------------------------------------------------------------------------- #
+_NUM_TYPES = {"int", "bigint", "smallint", "tinyint", "mediumint",
+              "decimal", "numeric", "float", "double", "bit"}
+_FECHA_TYPES = {"date", "datetime", "timestamp"}
+
+
+def _pk_columns(cur, tabla: str) -> list[str]:
+    cur.execute(
+        "SELECT COLUMN_NAME FROM information_schema.key_column_usage "
+        "WHERE table_schema = DATABASE() AND table_name = %s "
+        "AND constraint_name = 'PRIMARY' ORDER BY ordinal_position", [tabla])
+    return [r[0] for r in cur.fetchall()]
+
+
+def _is_auto(cur, tabla: str, col: str) -> bool:
+    cur.execute(
+        "SELECT EXTRA FROM information_schema.columns "
+        "WHERE table_schema = DATABASE() AND table_name = %s AND COLUMN_NAME = %s",
+        [tabla, col])
+    r = cur.fetchone()
+    return bool(r) and "auto_increment" in str(r[0]).lower()
+
+
+def _next_int_id(cur, tabla: str, col: str) -> int:
+    cur.execute(db.adapt(f"SELECT COALESCE(MAX(CAST({col} AS INTEGER)),0)+1 FROM {tabla}"))
+    return int(cur.fetchone()[0])
+
+
+def _notnull_defaults(cur, tabla: str, ya: dict) -> dict:
+    """Columnas NOT NULL sin default (y no auto) que faltan, con un valor por tipo."""
+    cur.execute(
+        "SELECT COLUMN_NAME, DATA_TYPE, EXTRA FROM information_schema.columns "
+        "WHERE table_schema = DATABASE() AND table_name = %s "
+        "AND IS_NULLABLE = 'NO' AND COLUMN_DEFAULT IS NULL", [tabla])
+    presentes = {k.upper() for k in ya}
+    out: dict = {}
+    for col, tipo, extra in cur.fetchall():
+        if col.upper() in presentes or "auto_increment" in str(extra or "").lower():
+            continue
+        t = str(tipo).lower()
+        out[col] = (0 if t in _NUM_TYPES
+                    else dt.datetime.now() if t in _FECHA_TYPES else "")
+    return out
+
+
+def _insert_legacy(cur, tabla: str, valores: dict):
+    """INSERT genérico: agrega defaults NOT NULL y devuelve el id (PK numérica o lastrowid)."""
+    pks = _pk_columns(cur, tabla)
+    id_generado = None
+    if len(pks) == 1 and not _is_auto(cur, tabla, pks[0]) and pks[0].upper() not in {
+            k.upper() for k in valores}:
+        id_generado = _next_int_id(cur, tabla, pks[0])
+        valores[pks[0]] = id_generado
+    valores.update(_notnull_defaults(cur, tabla, valores))
+    cols = list(valores)
+    ph = ",".join(["?"] * len(cols))
+    cur.execute(db.adapt(f"INSERT INTO {tabla} ({','.join(cols)}) VALUES ({ph})"),
+                [valores[c] for c in cols])
+    if id_generado is None:
+        id_generado = pks and valores.get(pks[0])
+        if id_generado is None:
+            try:
+                id_generado = cur.lastrowid
+            except Exception:  # noqa: BLE001
+                id_generado = None
+    return id_generado
+
+
+def _hojacampo_pk() -> str | None:
+    if db.ENGINE != "mysql":
+        return None
+    with db.get_connection() as conn:
+        pks = _pk_columns(conn.cursor(), "hojacampo")
+    return pks[0] if len(pks) == 1 else None
+
+
+def grupos_checklist() -> pd.DataFrame:
+    """Catálogo de grupos de checklist (hojacampo_grupo)."""
+    return db.run_query(
+        "SELECT IDGRUPO AS id, DESCRIPCION AS descripcion "
+        "FROM hojacampo_grupo ORDER BY DESCRIPCION")
+
+
+def checklist_admin(idequipo) -> pd.DataFrame:
+    """Ítems activos del checklist de un tipo, con la PK de hojacampo para poder editarlos."""
+    pk = _hojacampo_pk()
+    pk_expr = f"h.{pk}" if pk else "NULL"
+    df = db.run_query(
+        f"SELECT {pk_expr} AS hc_pk, h.IDGRUPO AS idgrupo, g.DESCRIPCION AS grupo, "
+        "h.ITEM AS iditem, i.descripcion AS item "
+        "FROM hojacampo h "
+        "LEFT JOIN hojacampo_grupo g ON g.IDGRUPO = h.IDGRUPO "
+        "LEFT JOIN hojacampo_item i ON i.iditem = h.ITEM "
+        "WHERE h.IDEQUIPO = ? AND h.ACTIVO = 1 "
+        "ORDER BY g.DESCRIPCION, i.descripcion", [idequipo])
+    for c in df.select_dtypes("object").columns:
+        df[c] = df[c].astype("string").str.strip()
+    return df
+
+
+def agregar_grupo_checklist(descripcion: str):
+    """Crea un grupo de checklist y devuelve su IDGRUPO. Solo MySQL."""
+    if db.ENGINE != "mysql":
+        raise RuntimeError("Disponible solo en producción (MySQL).")
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            idg = _insert_legacy(cur, "hojacampo_grupo", {"DESCRIPCION": descripcion})
+            conn.commit()
+            return idg
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def agregar_item_checklist(idequipo, idgrupo, descripcion: str):
+    """Crea un ítem (hojacampo_item) y lo vincula al tipo de equipo (hojacampo). Solo MySQL."""
+    if db.ENGINE != "mysql":
+        raise RuntimeError("Disponible solo en producción (MySQL).")
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            iditem = _insert_legacy(cur, "hojacampo_item", {"descripcion": descripcion})
+            _insert_legacy(cur, "hojacampo", {
+                "IDEQUIPO": idequipo, "IDGRUPO": idgrupo,
+                "ITEM": iditem, "ACTIVO": 1})
+            conn.commit()
+            return iditem
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def quitar_item_checklist(idequipo, hc_pk=None, iditem=None) -> int:
+    """Da de baja lógica (ACTIVO=0) un ítem del checklist de un tipo de equipo."""
+    pk = _hojacampo_pk()
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            if pk and hc_pk is not None:
+                cur.execute(db.adapt(
+                    f"UPDATE hojacampo SET ACTIVO=0 WHERE {pk}=?"), [hc_pk])
+            else:
+                cur.execute(db.adapt(
+                    "UPDATE hojacampo SET ACTIVO=0 WHERE IDEQUIPO=? AND ITEM=?"),
+                    [idequipo, iditem])
+            n = cur.rowcount
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
 
 
 _INS_SOLICITUD = (

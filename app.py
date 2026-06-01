@@ -2053,6 +2053,8 @@ def render_equipos_inv() -> None:
     if not _es_mysql():
         st.info("El inventario de equipos sólo está disponible en producción (MySQL).")
         return
+    _importar_equipos_inspecciones()
+
     clientes = cat_clientes()
     cli_map = {r.nombre: str(r.id) for r in clientes.itertuples()}
     emp = st.selectbox("Empresa", list(cli_map), index=None,
@@ -2062,6 +2064,37 @@ def render_equipos_inv() -> None:
         return
     st.warning("Los cambios se guardan sobre la base. **Escribe en producción.**")
     _inventario_equipos(cli_map[emp], ctx="tab")
+
+
+def _importar_equipos_inspecciones() -> None:
+    """Importa al inventario los equipos que aparecen en inspecciones con serie/matrícula."""
+    with st.expander("📥 Importar equipos desde inspecciones (serie / matrícula)"):
+        st.caption("Recorre todas las inspecciones y, donde haya Nº de serie o "
+                   "matrícula, asigna el equipo a la empresa de esa inspección. "
+                   "Omite los que ya estén cargados (misma empresa y serie).")
+        if st.button("Previsualizar", key="imp_prev"):
+            try:
+                r = datos.importar_equipos_desde_inspecciones(dry_run=True)
+                st.session_state["imp_prev_res"] = r
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"No se pudo previsualizar: {exc}")
+        prev = st.session_state.get("imp_prev_res")
+        if prev:
+            st.info(f"Candidatos con serie/matrícula: **{prev['candidatos']}** · "
+                    f"a importar (nuevos): **{prev['a_insertar']}** · "
+                    f"ya existentes (omitidos): **{prev['omitidos']}**")
+            if prev["a_insertar"] > 0:
+                conf = st.checkbox("Confirmo importar a producción", key="imp_conf")
+                if st.button("Importar ahora", type="primary", disabled=not conf,
+                             key="imp_run"):
+                    try:
+                        res = datos.importar_equipos_desde_inspecciones(dry_run=False)
+                        st.cache_data.clear()
+                        st.session_state.pop("imp_prev_res", None)
+                        st.success(f"{res['insertados']} equipo(s) importado(s).")
+                        st.rerun()
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"No se pudo importar: {exc}")
 
 
 # --------------------------------------------------------------------------- #
@@ -2114,8 +2147,10 @@ def render_kpi() -> None:
 # Pestaña: Inspecciones (agrupa Nueva y Editar en sub-pestañas)
 # --------------------------------------------------------------------------- #
 def render_inspecciones_menu(min_f: dt.date, max_f: dt.date) -> None:
-    sub = [("Nueva", render_cargar),
-           ("Editar", lambda: render_editar(min_f, max_f))]
+    sub = [("Detalle inspección", lambda: render_detalle(min_f, max_f))]
+    if _puede_escribir():
+        sub.append(("Nueva", render_cargar))
+        sub.append(("Editar", lambda: render_editar(min_f, max_f)))
     subtabs = st.tabs([s[0] for s in sub])
     for _t, (_, _fn) in zip(subtabs, sub):
         with _t:
@@ -2206,6 +2241,64 @@ def render_tipos_equipo() -> None:
                         st.rerun()
                     except Exception as exc:  # noqa: BLE001
                         st.error(f"No se pudo crear: {exc}")
+
+    st.divider()
+    _editor_checklist()
+
+
+def _editor_checklist() -> None:
+    """Editor de la hoja de campo (checklist) por tipo de equipo."""
+    st.markdown("#### Checklist (hoja de campo)")
+    if not _es_mysql():
+        st.caption("La edición del checklist sólo está disponible en producción (MySQL).")
+        return
+    tipos = cat_tipos_admin()
+    tmap = {r.descripcion: str(r.id) for r in tipos.itertuples()}
+    tlbl = st.selectbox("Tipo de equipo", list(tmap), index=None,
+                        placeholder="Elegí un tipo para ver/editar su checklist…",
+                        key="chk_tipo")
+    if not tlbl:
+        return
+    idequipo = tmap[tlbl]
+    df = datos.checklist_admin(idequipo)
+    if df.empty:
+        st.caption("Este tipo no tiene ítems de checklist.")
+    else:
+        st.caption(f"{len(df)} ítem(s).")
+        for grupo, g in df.groupby("grupo", dropna=False):
+            st.markdown(f"**{fmt(grupo) if pd.notna(grupo) else '(sin grupo)'}**")
+            for r in g.itertuples():
+                c1, c2 = st.columns([6, 1])
+                c1.write(f"• {fmt(r.item)}")
+                if c2.button("Quitar", key=f"chk_del_{idequipo}_{r.idgrupo}_{r.iditem}",
+                             use_container_width=True):
+                    datos.quitar_item_checklist(idequipo, hc_pk=r.hc_pk, iditem=r.iditem)
+                    st.cache_data.clear()
+                    st.rerun()
+
+    grupos = datos.grupos_checklist()
+    gmap = {r.descripcion: r.id for r in grupos.itertuples()}
+    with st.expander("➕ Agregar ítem"):
+        with st.form("chk_add_item", clear_on_submit=True):
+            gsel = st.selectbox("Grupo", ["(nuevo grupo)"] + list(gmap), key="chk_g")
+            gnuevo = (st.text_input("Nombre del grupo nuevo", key="chk_gnuevo")
+                      if gsel == "(nuevo grupo)" else "")
+            item = st.text_input("Descripción del ítem", key="chk_item")
+            if st.form_submit_button("Agregar ítem", type="primary"):
+                if not _norm(item):
+                    st.error("La descripción del ítem es obligatoria.")
+                elif gsel == "(nuevo grupo)" and not _norm(gnuevo):
+                    st.error("Indicá el nombre del grupo nuevo.")
+                else:
+                    try:
+                        idgrupo = (datos.agregar_grupo_checklist(_norm(gnuevo))
+                                   if gsel == "(nuevo grupo)" else gmap[gsel])
+                        datos.agregar_item_checklist(idequipo, idgrupo, _norm(item))
+                        st.cache_data.clear()
+                        st.success("Ítem agregado.")
+                        st.rerun()
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"No se pudo agregar: {exc}")
 
 
 # --------------------------------------------------------------------------- #
@@ -2482,10 +2575,8 @@ except Exception as exc:  # noqa: BLE001
 # Pestañas según el rol del usuario (ver ROLES / permisos)
 _secciones = [
     ("Dashboard", lambda: render_inspecciones(MIN_F, MAX_F)),
-    ("Detalle inspección", lambda: render_detalle(MIN_F, MAX_F)),
+    ("Inspecciones", lambda: render_inspecciones_menu(MIN_F, MAX_F)),
 ]
-if _puede_escribir():
-    _secciones.append(("Inspecciones", lambda: render_inspecciones_menu(MIN_F, MAX_F)))
 _secciones.append(("Informes", render_informes))
 _secciones.append(("Formularios", render_formularios))
 if _puede_escribir() or _puede_admin_usuarios():
