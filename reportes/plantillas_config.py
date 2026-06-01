@@ -44,6 +44,14 @@ LOGOS_CERTIFICACION = [
     str(ASSETS / "oaa.png"),
 ]
 
+# --- Datos corporativos (de www.americanad.com.ar) ---
+EMPRESA_NOMBRE = "American Advisor"
+EMPRESA_TAGLINE = "Asesoramiento, Capacitación y Medicina Integral Laboral"
+EMPRESA_DIRECCION = "Pasteur Oeste 256, Rawson, San Juan"
+EMPRESA_TEL = "+54 264 428 7809"
+EMPRESA_EMAIL = "recepcion@americanad.com.ar"
+EMPRESA_WEB = "www.americanad.com.ar"
+
 # --- Informe preliminar ---
 TESTIGO_PRUEBAS = "NICOLAS GARCIA"        # 3) Que ha presenciado las pruebas
 NOTA_PRELIMINAR = "El informe queda sujeto a la aprobación con la emisión del certificado"

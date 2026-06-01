@@ -1660,12 +1660,19 @@ for _t, (_, _fn) in zip(_tabs, _secciones):
     with _t:
         _fn()
 
-# --- Pie de página: certificaciones de la empresa (todas las páginas) ---
+# --- Pie de página corporativo (todas las páginas) ---
 st.divider()
 st.markdown(
-    f"<p style='color:{cfg.COLOR_GRIS};margin-bottom:6px;font-family:Lato,sans-serif'>"
-    f"La empresa se encuentra <b>certificada en las normas ISO 9001, ISO 14001 e "
-    f"ISO 45001</b> y <b>acreditada por el OAA</b>.</p>", unsafe_allow_html=True)
+    f"<div style='font-family:Lato,sans-serif'>"
+    f"<p style='color:{cfg.COLOR_NAVY};font-weight:900;font-size:1.05rem;margin-bottom:0'>"
+    f"{cfg.EMPRESA_NOMBRE}</p>"
+    f"<p style='color:{cfg.COLOR_AZUL};margin:0 0 4px 0'>{cfg.EMPRESA_TAGLINE}</p>"
+    f"<p style='color:{cfg.COLOR_GRIS};font-size:.9rem;margin:0'>"
+    f"{cfg.EMPRESA_DIRECCION} · Tel: {cfg.EMPRESA_TEL} · {cfg.EMPRESA_EMAIL} · "
+    f"{cfg.EMPRESA_WEB}</p>"
+    f"<p style='color:{cfg.COLOR_GRIS};font-size:.9rem;margin:6px 0 6px 0'>"
+    f"<b>Certificada en ISO 9001, ISO 14001 e ISO 45001</b> y "
+    f"<b>acreditada por el OAA</b>.</p></div>", unsafe_allow_html=True)
 _fc = st.columns([1, 1, 1, 1, 6])
 _fc[0].image(cfg.LOGOS_CERTIFICACION[0], width=78)   # ISO 9001
 _fc[1].image(cfg.LOGOS_CERTIFICACION[1], width=78)   # ISO 14001
