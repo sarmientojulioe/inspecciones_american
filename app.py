@@ -33,8 +33,10 @@ st.markdown(f"<style>{_LATO_CSS}</style>", unsafe_allow_html=True)
 _BRAND_CSS = f"""
 /* Fondo general con un leve tinte azulado (en vez de blanco puro) */
 .stApp {{ background-color: #EEF3F9; }}
-/* Quitar el espacio superior por defecto de Streamlit (la barra navy queda arriba) */
-[data-testid="stHeader"] {{ background: transparent; height: 0; min-height: 0; }}
+/* Quitar el espacio superior por defecto de Streamlit (la barra navy queda flush arriba) */
+[data-testid="stHeader"] {{ background: transparent; height: 0; min-height: 0; display: none; }}
+[data-testid="stMain"], [data-testid="stAppViewContainer"] {{ padding-top: 0 !important; }}
+[data-testid="stMainBlockContainer"],
 [data-testid="stAppViewContainer"] > .main .block-container,
 .block-container {{ padding-top: 0 !important; padding-bottom: 150px !important; }}
 h1, h2, h3 {{ color: {cfg.COLOR_NAVY}; font-family: Lato, sans-serif; }}
