@@ -71,3 +71,50 @@ El MySQL de Easypanel es **interno** (no expuesto). La actualización se hace po
 
 Cuando se deje de usar el PowerBuilder, detener la sync (no re-importar más): el MySQL pasa
 a ser la única fuente de verdad y la app escribe directamente ahí.
+
+## 6. Deploy automático (GitHub → Easypanel)
+
+La app corre en **Easypanel** (Docker, build por `Dockerfile`). El objetivo es que cada
+`git push` a la rama **`main`** dispare una reconstrucción automática del servicio, sin tener
+que entrar al panel a darle "Deploy" a mano.
+
+Mecanismo: **push a GitHub → GitHub llama un webhook → Easypanel reconstruye el servicio.**
+
+### 6.1. Dominio con HTTPS válido (para el webhook)
+
+El servidor responde por IP (`167.71.125.132`) con certificado autofirmado, lo que hace que
+GitHub rechace el webhook por SSL. La solución es exponer Easypanel por un **dominio propio**:
+
+1. En el DNS del dominio, crear un registro **A** apuntando a `167.71.125.132`
+   (p. ej. `panel.midominio.com` para el panel, e `inspecciones.midominio.com` para la app).
+2. En Easypanel → **Settings → Domains** (panel) configurar el dominio del panel y dejar que
+   Easypanel emita el **certificado Let's Encrypt** (HTTPS válido automático).
+3. En el servicio `inspecciones_american` → pestaña **Domains**, asignar el dominio de la app.
+
+Con HTTPS válido, el webhook de GitHub funciona con **SSL verification activado**.
+
+### 6.2. Fuente del servicio = GitHub
+
+En Easypanel: proyecto → servicio `inspecciones_american` → pestaña **Source**:
+- Provider **GitHub**, repo `sarmientojulioe/inspecciones_american`, rama **`main`**.
+- Build method: **Dockerfile**.
+
+### 6.3. Webhook de deploy
+
+1. En el servicio → pestaña **Deployments** → sección **Deploy Webhook**, copiar la URL única
+   (formato `https://panel.midominio.com/api/deploy/<TOKEN>`). Es secreta (equivale a una clave).
+2. En GitHub: repo → **Settings → Webhooks → Add webhook**:
+   - **Payload URL:** la URL del paso anterior.
+   - **Content type:** `application/json`.
+   - **SSL verification:** *Enable* (ya que el dominio tiene HTTPS válido).
+   - **Which events:** *Just the push event*.
+   - **Active:** ✓ → **Add webhook**.
+
+### 6.4. Probar
+
+Hacer un commit y `git push origin main`. En GitHub → **Webhooks** la entrega debe figurar con
+**✅ 200**; en Easypanel → **Deployments** arranca un build nuevo. La página queda actualizada
+al terminar el build.
+
+> Seguridad: el token del webhook permite disparar deploys. Si se filtra, regenerarlo en
+> Easypanel y actualizar la URL en el webhook de GitHub.
