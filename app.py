@@ -1572,9 +1572,9 @@ if _pagina_verificacion():
 _init_esquema()
 
 # --- Encabezado en el cuerpo de la página (sin barra lateral) ---
-_h1, _h2, _h3 = st.columns([1.5, 3, 3])
+_h1, _h2 = st.columns([1.4, 4])
 with _h1:
-    st.image(cfg.LOGO_AMERICAN, width=190)
+    st.image(cfg.LOGO_AMERICAN, width=300)
 with _h2:
     st.markdown(
         f"<h1 style='margin-bottom:0;font-family:Lato,sans-serif;font-weight:900;"
@@ -1582,15 +1582,18 @@ with _h2:
         f"<p style='color:{cfg.COLOR_GRIS};font-size:1.2rem;margin-top:0;"
         f"font-family:Lato,sans-serif'>Sistema de inspecciones de equipos</p>",
         unsafe_allow_html=True)
-    st.image(cfg.LOGO_AREA_INSP, use_container_width=True)
-with _h3:
-    st.markdown(f"<p style='color:{cfg.COLOR_GRIS};margin-bottom:4px'>"
-                f"<b>Empresa certificada</b></p>", unsafe_allow_html=True)
-    _ic = st.columns(4)
-    _ic[0].image(cfg.LOGOS_CERTIFICACION[0], use_container_width=True)  # ISO 9001
-    _ic[1].image(cfg.LOGOS_CERTIFICACION[1], use_container_width=True)  # ISO 14001
-    _ic[2].image(cfg.LOGOS_CERTIFICACION[2], use_container_width=True)  # ISO 45001
-    _ic[3].image(cfg.LOGOS_CERTIFICACION[3], use_container_width=True)  # OAA
+    st.image(cfg.LOGO_AREA_INSP, width=230)
+
+# --- Certificaciones de la empresa (abajo, con leyenda) ---
+st.markdown(
+    f"<p style='color:{cfg.COLOR_GRIS};margin-bottom:6px;font-family:Lato,sans-serif'>"
+    f"La empresa se encuentra <b>certificada en las normas ISO 9001, ISO 14001 e "
+    f"ISO 45001</b> y <b>acreditada por el OAA</b>.</p>", unsafe_allow_html=True)
+_ic = st.columns([1, 1, 1, 1, 6])
+_ic[0].image(cfg.LOGOS_CERTIFICACION[0], width=80)   # ISO 9001
+_ic[1].image(cfg.LOGOS_CERTIFICACION[1], width=80)   # ISO 14001
+_ic[2].image(cfg.LOGOS_CERTIFICACION[2], width=80)   # ISO 45001
+_ic[3].image(cfg.LOGOS_CERTIFICACION[3], width=110)  # OAA
 
 # --- Barra de usuario + Settings (en el cuerpo) ---
 if st.session_state.get("auth"):
