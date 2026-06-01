@@ -1600,6 +1600,26 @@ if _pagina_verificacion():
 # porque _validar_login consulta licusuario.rol.
 _init_esquema()
 
+# --- Barra de usuario arriba a la derecha: nombre · rol, menú ⋮ (settings) y salir ---
+if st.session_state.get("auth"):
+    _u1, _u2, _u3 = st.columns([7, 0.9, 1.7])
+    _u1.markdown(
+        f"👤 **{st.session_state['auth']['nombre']}** · "
+        f"<span style='color:{cfg.COLOR_AZUL};font-weight:700'>{_rol_actual()}</span>",
+        unsafe_allow_html=True)
+    with _u2.popover("⋮", use_container_width=True):
+        st.markdown("**Settings**")
+        st.caption(db.descripcion())
+        if st.button("Probar conexión", use_container_width=True):
+            try:
+                base, motor = db.server_info()
+                st.success(f"OK: {base} ({motor})")
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Sin conexión: {exc}")
+    if _u3.button("Cerrar sesión", use_container_width=True):
+        del st.session_state["auth"]
+        st.rerun()
+
 # --- Encabezado en el cuerpo de la página (sin barra lateral) ---
 _h1, _h2 = st.columns([1.4, 4])
 with _h1:
@@ -1612,26 +1632,6 @@ with _h2:
         f"font-family:Lato,sans-serif'>Sistema de inspecciones de equipos</p>",
         unsafe_allow_html=True)
     st.image(cfg.LOGO_AREA_INSP, width=230)
-
-# --- Barra de usuario + Settings (en el cuerpo) ---
-if st.session_state.get("auth"):
-    _u1, _u2, _u3 = st.columns([4, 1.3, 1.3])
-    _u1.markdown(
-        f"👤 **{st.session_state['auth']['nombre']}** · "
-        f"<span style='color:{cfg.COLOR_AZUL};font-weight:700'>{_rol_actual()}</span>",
-        unsafe_allow_html=True)
-    if _u3.button("Cerrar sesión", use_container_width=True):
-        del st.session_state["auth"]
-        st.rerun()
-
-with st.expander("⚙️ Settings"):
-    st.caption(db.descripcion())
-    if st.button("Probar conexión"):
-        try:
-            base, motor = db.server_info()
-            st.success(f"OK: {base} ({motor})")
-        except Exception as exc:  # noqa: BLE001
-            st.error(f"Sin conexión: {exc}")
 
 st.divider()
 _login_gate()
