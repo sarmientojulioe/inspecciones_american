@@ -1547,9 +1547,19 @@ def _login_gate() -> None:
     except Exception as exc:  # noqa: BLE001
         st.error(f"No se pudo conectar a la base: {exc}")
         st.stop()
-    # Formulario compacto y centrado (deja espacio a los lados para imágenes)
-    _lc1, _lc2, _lc3 = st.columns([1, 1.3, 1])
-    with _lc2:
+    _cap = (f"text-align:center;color:{cfg.COLOR_NAVY};font-weight:700;"
+            f"font-family:Lato,sans-serif;font-size:.95rem;margin-bottom:8px")
+    _izq, _centro, _der = st.columns([1.3, 1.6, 1.3])
+    # Izquierda: trinorma ISO
+    with _izq:
+        st.markdown(f"<p style='{_cap}'>Empresa certificada en Trinorma</p>",
+                    unsafe_allow_html=True)
+        _ci = st.columns(3)
+        _ci[0].image(cfg.LOGOS_CERTIFICACION[0], use_container_width=True)  # ISO 9001
+        _ci[1].image(cfg.LOGOS_CERTIFICACION[1], use_container_width=True)  # ISO 14001
+        _ci[2].image(cfg.LOGOS_CERTIFICACION[2], use_container_width=True)  # ISO 45001
+    # Centro: formulario de ingreso
+    with _centro:
         st.markdown(
             f"<h3 style='text-align:center;color:{cfg.COLOR_NAVY};"
             f"font-family:Lato,sans-serif;margin-bottom:8px'>Ingreso</h3>",
@@ -1566,7 +1576,12 @@ def _login_gate() -> None:
                     st.rerun()
                 else:
                     st.error("Usuario o contraseña incorrectos.")
-    _pie_corporativo()
+    # Derecha: acreditación OAA
+    with _der:
+        st.markdown(f"<p style='{_cap}'>Empresa acreditada en OAA</p>",
+                    unsafe_allow_html=True)
+        _od1, _od2, _od3 = st.columns([1, 2, 1])
+        _od2.image(cfg.LOGOS_CERTIFICACION[3], use_container_width=True)  # OAA
     st.stop()
 
 
