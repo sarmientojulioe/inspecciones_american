@@ -1550,14 +1550,11 @@ def _login_gate() -> None:
     _cap = (f"text-align:center;color:{cfg.COLOR_NAVY};font-weight:700;"
             f"font-family:Lato,sans-serif;font-size:.95rem;margin-bottom:8px")
     _izq, _centro, _der = st.columns([1.3, 1.6, 1.3])
-    # Izquierda: trinorma ISO
+    # Izquierda: trinorma ISO (lista de imágenes, sin columnas anidadas)
     with _izq:
         st.markdown(f"<p style='{_cap}'>Empresa certificada en Trinorma</p>",
                     unsafe_allow_html=True)
-        _ci = st.columns(3)
-        _ci[0].image(cfg.LOGOS_CERTIFICACION[0], use_container_width=True)  # ISO 9001
-        _ci[1].image(cfg.LOGOS_CERTIFICACION[1], use_container_width=True)  # ISO 14001
-        _ci[2].image(cfg.LOGOS_CERTIFICACION[2], use_container_width=True)  # ISO 45001
+        st.image(cfg.LOGOS_CERTIFICACION[0:3], width=72)  # ISO 9001 / 14001 / 45001
     # Centro: formulario de ingreso
     with _centro:
         st.markdown(
@@ -1580,8 +1577,7 @@ def _login_gate() -> None:
     with _der:
         st.markdown(f"<p style='{_cap}'>Empresa acreditada en OAA</p>",
                     unsafe_allow_html=True)
-        _od1, _od2, _od3 = st.columns([1, 2, 1])
-        _od2.image(cfg.LOGOS_CERTIFICACION[3], use_container_width=True)  # OAA
+        st.image(cfg.LOGOS_CERTIFICACION[3], width=150)  # OAA
     st.stop()
 
 
