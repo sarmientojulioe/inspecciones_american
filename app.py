@@ -69,6 +69,8 @@ hr {{ border-color: {cfg.COLOR_AZUL} !important; opacity: .5; }}
     background: #FFFFFF; border-radius: 8px;
 }}
 [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {{ display: none; }}
+/* Ocultar el menú nativo de Streamlit (Rerun/Deploy/etc.) y el footer "Made with" */
+#MainMenu, [data-testid="stToolbar"], [data-testid="stDecoration"], footer {{ display: none; }}
 """
 st.markdown(f"<style>{_BRAND_CSS}</style>", unsafe_allow_html=True)
 
@@ -1681,8 +1683,9 @@ if st.session_state.get("auth"):
         f"👤 **{st.session_state['auth']['nombre']}** · "
         f"<span style='color:{cfg.COLOR_AZUL};font-weight:700'>{_rol_actual()}</span>",
         unsafe_allow_html=True)
-    with _u2.popover("⋮", use_container_width=True):
-        st.markdown("**Settings**")
+    with _u2.popover("⋮", use_container_width=True,
+                     help="Configuración: estado y prueba de conexión a la base"):
+        st.markdown("**Configuración**")
         st.caption(db.descripcion())
         if st.button("Probar conexión", use_container_width=True):
             try:
