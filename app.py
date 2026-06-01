@@ -1662,9 +1662,10 @@ _init_esquema()
 # --- Barra superior corporativa (navy) + línea de gradiente (estilo campus) ---
 st.markdown(
     "<div style='background:#182640;color:#e8eef6;font-family:Lato,sans-serif;"
-    "padding:14px 22px;margin:0 0 0 0;display:flex;justify-content:space-between;"
-    "align-items:center;flex-wrap:wrap;gap:8px;font-size:1rem;font-weight:700;"
-    "letter-spacing:.03em;text-transform:uppercase'>"
+    "padding:14px 24px;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);"
+    "width:100vw;display:flex;justify-content:space-between;align-items:center;"
+    "flex-wrap:wrap;gap:8px;font-size:1rem;font-weight:700;letter-spacing:.03em;"
+    "text-transform:uppercase;box-shadow:0 2px 8px rgba(0,0,0,.2)'>"
     f"<span>{cfg.EMPRESA_NOMBRE} · Inspecciones y Certificaciones, Capacitación "
     "y Medicina Integral Laboral</span>"
     "<span style='font-size:.85rem;color:#9fd0ec'>"
