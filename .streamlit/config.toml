@@ -11,3 +11,8 @@ gatherUsageStats = false
 
 [theme]
 base = "light"
+# Paleta del Manual de marca American Advisor
+primaryColor = "#2884C7"            # azul (PANTONE 3015)
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#EDEDED"  # gris claro (PANTONE 5245)
+textColor = "#3C3C3C"               # gris oscuro (PANTONE 425)

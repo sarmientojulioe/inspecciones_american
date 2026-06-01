@@ -94,6 +94,28 @@ def _foto_item(f) -> tuple[bytes, str]:
     return f or b"", ""
 
 
+def _img_h(path: str, h: float) -> Image:
+    """Imagen escalada a una altura fija (mantiene proporción)."""
+    iw, ih = ImageReader(path).getSize()
+    return Image(path, width=h * iw / ih, height=h)
+
+
+def _cert_logos_row(h: float = 0.95 * cm):
+    """Fila centrada con los logos de certificación de la empresa (trinorma ISO + OAA)."""
+    imgs = []
+    for p in cfg.LOGOS_CERTIFICACION:
+        try:
+            imgs.append(_img_h(p, h))
+        except Exception:  # noqa: BLE001
+            pass
+    if not imgs:
+        return Spacer(1, 0)
+    t = Table([imgs], colWidths=[CONTENT_W / len(imgs)] * len(imgs))
+    t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                           ("ALIGN", (0, 0), (-1, -1), "CENTER")]))
+    return t
+
+
 def _informe_nro(d) -> str:
     num = d["num"]
     if num is None or (isinstance(num, float) and pd.isna(num)):
@@ -257,8 +279,12 @@ def _preliminar_story(d, fotos: list | None = None, titulo_sufijo: str = "") -> 
                                     ("BOTTOMPADDING", (0, 0), (-1, -1), 10)]))
             e.append(tf)
 
+    # Logos de certificación de la empresa (trinorma ISO + OAA)
+    e.append(Spacer(1, 0.5 * cm))
+    e.append(_cert_logos_row())
+
     # Pie
-    e.append(Spacer(1, 0.8 * cm))
+    e.append(Spacer(1, 0.4 * cm))
     e.append(HRFlowable(width="100%", thickness=0.5, color=colors.black))
     hoy = _fecha(pd.Timestamp.today())
     pie = Table([

@@ -27,6 +27,16 @@ st.set_page_config(
 _LATO_CSS = (Path(__file__).parent / "assets" / "lato.css").read_text(encoding="utf-8")
 st.markdown(f"<style>{_LATO_CSS}</style>", unsafe_allow_html=True)
 
+# Marca American Advisor: navy en títulos, azul en la pestaña activa
+_BRAND_CSS = f"""
+h1, h2, h3 {{ color: {cfg.COLOR_NAVY}; font-family: Lato, sans-serif; }}
+.stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {{
+    color: {cfg.COLOR_AZUL};
+}}
+.stTabs [data-baseweb="tab-highlight"] {{ background-color: {cfg.COLOR_AZUL}; }}
+"""
+st.markdown(f"<style>{_BRAND_CSS}</style>", unsafe_allow_html=True)
+
 # Columnas del listado de inspecciones y su etiqueta
 COLUMNAS = {
     "num": "Nº", "fecha": "Fecha", "vencimiento": "Vencimiento", "cliente": "Cliente",
@@ -1419,16 +1429,27 @@ if st.sidebar.button("Probar conexión"):
     except Exception as exc:  # noqa: BLE001
         st.sidebar.error(f"Sin conexión: {exc}")
 
-_hcol1, _hcol2 = st.columns([1, 5])
+st.sidebar.divider()
+st.sidebar.caption("Empresa certificada")
+_cba, _cbb = st.sidebar.columns(2)
+_cba.image(cfg.LOGOS_CERTIFICACION[0], use_container_width=True)
+_cbb.image(cfg.LOGOS_CERTIFICACION[1], use_container_width=True)
+_cbc, _cbd = st.sidebar.columns(2)
+_cbc.image(cfg.LOGOS_CERTIFICACION[2], use_container_width=True)
+_cbd.image(cfg.LOGOS_CERTIFICACION[3], use_container_width=True)
+
+_hcol1, _hcol2, _hcol3 = st.columns([1.1, 3.4, 2.2])
 with _hcol1:
     st.image(cfg.LOGO_AMERICAN, width=230)
 with _hcol2:
     st.markdown(
-        "<h1 style='margin-bottom:0;font-family:Lato,sans-serif;font-weight:900'>"
-        "American Advisor</h1>"
-        "<p style='color:#666;font-size:1.3rem;margin-top:0;font-family:Lato,sans-serif'>"
-        "Sistema de inspecciones de equipos</p>",
+        f"<h1 style='margin-bottom:0;font-family:Lato,sans-serif;font-weight:900;"
+        f"color:{cfg.COLOR_NAVY}'>American Advisor</h1>"
+        f"<p style='color:{cfg.COLOR_GRIS};font-size:1.3rem;margin-top:0;"
+        f"font-family:Lato,sans-serif'>Sistema de inspecciones de equipos</p>",
         unsafe_allow_html=True)
+with _hcol3:
+    st.image(cfg.LOGO_AREA_INSP, use_container_width=True)
 
 _login_gate()
 

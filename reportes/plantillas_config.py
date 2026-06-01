@@ -11,6 +11,23 @@ LOGO_AMERICAN = str(ASSETS / "american_advisor.jpg")
 LOGO_AAD = str(ASSETS / "aad.jpg")
 LOGO_OAA = str(ASSETS / "oaa.jpg")
 
+# Isologo del área "Inspecciones y Certificaciones de Equipos" (Manual de marca)
+LOGO_AREA_INSP = str(ASSETS / "area_inspecciones.png")
+
+# Colores del Manual de marca
+COLOR_NAVY = "#22355B"   # azul oscuro (PANTONE 7463)
+COLOR_AZUL = "#2884C7"   # azul (PANTONE 3015)
+COLOR_CYAN = "#3EBAC8"   # turquesa (PANTONE 631 C)
+COLOR_GRIS = "#3C3C3C"   # gris oscuro (PANTONE 425)
+
+# Certificaciones de la empresa: trinorma ISO + OAA (para web e informes)
+LOGOS_CERTIFICACION = [
+    str(ASSETS / "iso9001.png"),
+    str(ASSETS / "iso14001.jpg"),
+    str(ASSETS / "iso45001.png"),
+    str(ASSETS / "oaa.png"),
+]
+
 # --- Informe preliminar ---
 TESTIGO_PRUEBAS = "NICOLAS GARCIA"        # 3) Que ha presenciado las pruebas
 NOTA_PRELIMINAR = "El informe queda sujeto a la aprobación con la emisión del certificado"
