@@ -137,7 +137,8 @@ def _puede_admin_usuarios() -> bool:
 @st.cache_resource
 def _init_esquema():
     """Crea tablas de fotos/leyendas y la columna rol si faltan (una vez por proceso)."""
-    for fn in (datos.asegurar_esquema_fotos, datos.asegurar_esquema_roles):
+    for fn in (datos.asegurar_esquema_fotos, datos.asegurar_esquema_roles,
+               datos.asegurar_esquema_empresas):
         try:
             fn()
         except Exception:  # noqa: BLE001
@@ -406,6 +407,16 @@ def _norm(v):
 
 def _cambio(a, b) -> bool:
     return _norm(a) != _norm(b)
+
+
+def fmt2(valor) -> str:
+    """Valor como texto plano para campos editables ('' si es nulo)."""
+    v = _norm(valor)
+    return "" if v is None else str(v)
+
+
+def _es_mysql() -> bool:
+    return db.ENGINE == "mysql"
 
 
 def _es_favorable(estado) -> bool:
@@ -1563,43 +1574,361 @@ def render_empresas() -> None:
     if not _puede_admin_usuarios():
         st.error("No tenés permisos para editar empresas.")
         return
-    st.warning("Cambios sobre los datos de las empresas (clientes). **Escribe en producción.**")
-    base = cat_clientes_admin()
-    ed = pd.DataFrame({
-        "id": base["id"].values,
-        "Razón social": base["razon_social"].fillna("").values,
-        "CUIT": base["cuit"].fillna("").values,
-        "Email": base["email"].fillna("").values,
-        "Teléfono": base["telefono"].fillna("").values,
-        "Domicilio": base["domicilio"].fillna("").values,
-    })
-    original = ed.copy()
-    st.caption(f"{len(ed)} empresas — editá las celdas y guardá.")
-    cols = ["Razón social", "CUIT", "Email", "Teléfono", "Domicilio"]
-    edited = st.data_editor(
-        ed, hide_index=True, use_container_width=True, key="editor_empresas",
-        column_order=cols,
-        column_config={"Razón social": st.column_config.TextColumn(required=True),
-                       "Domicilio": st.column_config.TextColumn(width="large")})
-    if st.button("Guardar empresas", type="primary"):
-        cambios = []
-        for i in range(len(edited)):
-            nue, vie = edited.iloc[i], original.iloc[i]
-            if any(_cambio(nue[c], vie[c]) for c in cols):
-                cambios.append(dict(
-                    id=str(nue["id"]), razon_social=_norm(nue["Razón social"]),
-                    cuit=_norm(nue["CUIT"]), email=_norm(nue["Email"]),
-                    telefono=_norm(nue["Teléfono"]), domicilio=_norm(nue["Domicilio"])))
-        if not cambios:
-            st.info("No hay cambios para guardar.")
-        else:
-            try:
-                n = datos.actualizar_clientes(cambios)
-                st.cache_data.clear()
-                st.success(f"{n} empresa(s) actualizada(s).")
+    if st.session_state.get("emp_sel"):
+        _ficha_empresa(str(st.session_state["emp_sel"]))
+    else:
+        _listado_empresas()
+
+
+def _listado_empresas() -> None:
+    """Buscador por razón social / CUIT y listado clickeable de empresas."""
+    c1, c2 = st.columns([5, 1])
+    texto = c1.text_input("Buscar empresa", key="emp_busq",
+                          placeholder="Razón social o CUIT…",
+                          label_visibility="collapsed")
+    if c2.button("Limpiar", use_container_width=True):
+        st.session_state["emp_busq"] = ""
+        st.rerun()
+
+    res = datos.buscar_clientes(texto)
+    if res.empty:
+        st.info("No hay empresas que coincidan con la búsqueda.")
+        return
+    st.caption(f"{len(res)} empresa(s). Hacé clic en una para ver su ficha.")
+    for r in res.itertuples():
+        sub = " · ".join(p for p in [
+            f"CUIT {fmt(r.cuit)}" if _norm(r.cuit) else None,
+            fmt(r.domicilio) if _norm(r.domicilio) else None] if p)
+        etiqueta = f"🏢  {fmt(r.razon_social)}" + (f"   —   {sub}" if sub else "")
+        if st.button(etiqueta, key=f"emp_open_{r.id}", use_container_width=True):
+            st.session_state["emp_sel"] = str(r.id)
+            st.rerun()
+
+
+def _ficha_empresa(idcliente: str) -> None:
+    """Hoja con todos los datos de una empresa: generales, contactos, domicilios, equipos."""
+    base = datos.cliente_detalle(idcliente)
+    if base is None:
+        st.error("No se encontró la empresa.")
+        if st.button("← Volver al listado"):
+            st.session_state.pop("emp_sel", None)
+            st.rerun()
+        return
+
+    top1, top2 = st.columns([4, 1])
+    top1.markdown(f"### 🏢 {fmt(base['razon_social'])}")
+    if top2.button("← Volver", use_container_width=True):
+        st.session_state.pop("emp_sel", None)
+        st.rerun()
+    st.warning("Los cambios se guardan sobre la base. **Escribe en producción.**")
+
+    _ficha_datos_generales(idcliente, base)
+    st.divider()
+    _ficha_contactos(idcliente)
+    st.divider()
+    _ficha_domicilios(idcliente)
+    st.divider()
+    _ficha_equipos(idcliente)
+
+
+def _ficha_datos_generales(idcliente: str, base: pd.Series) -> None:
+    st.markdown("#### Datos generales")
+    edit = st.toggle("Editar datos generales", key="emp_edit_base")
+    if not edit:
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f"**CUIT**\n\n{fmt(base['cuit'])}")
+        c2.markdown(f"**Email**\n\n{fmt(base['email'])}")
+        c3.markdown(f"**Teléfono**\n\n{fmt(base['telefono'])}")
+        st.markdown(f"**Domicilio (sistema)**\n\n{fmt(base['domicilio'])}")
+        return
+    with st.form("emp_form_base"):
+        razon = st.text_input("Razón social", value=fmt2(base["razon_social"]))
+        c1, c2 = st.columns(2)
+        cuit = c1.text_input("CUIT", value=fmt2(base["cuit"]))
+        tel = c2.text_input("Teléfono", value=fmt2(base["telefono"]))
+        email = st.text_input("Email", value=fmt2(base["email"]))
+        dom = st.text_input("Domicilio (el que usa el sistema para certificados)",
+                            value=fmt2(base["domicilio"]))
+        if st.form_submit_button("Guardar datos generales", type="primary"):
+            if not _norm(razon):
+                st.error("La razón social es obligatoria.")
+            else:
+                try:
+                    datos.actualizar_cliente_base(
+                        idcliente, _norm(razon), _norm(cuit), _norm(email),
+                        _norm(tel), _norm(dom))
+                    st.cache_data.clear()
+                    st.success("Datos actualizados.")
+                    st.rerun()
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"No se pudo guardar: {exc}")
+
+
+def _ficha_contactos(idcliente: str) -> None:
+    st.markdown("#### Contactos")
+    df = datos.contactos_de(idcliente)
+    if not _es_mysql():
+        st.caption("Los contactos adicionales sólo están disponibles en producción (MySQL).")
+        return
+    if df.empty:
+        st.caption("Sin contactos cargados.")
+    for r in df.itertuples():
+        with st.expander(f"👤 {fmt(r.nombre)}"
+                         + (f" — {fmt(r.cargo)}" if _norm(r.cargo) else "")):
+            with st.form(f"cto_form_{r.id}"):
+                nombre = st.text_input("Nombre y apellido", value=fmt2(r.nombre))
+                c1, c2 = st.columns(2)
+                cargo = c1.text_input("Cargo / puesto", value=fmt2(r.cargo))
+                tel = c2.text_input("Teléfono / celular", value=fmt2(r.telefono))
+                email = st.text_input("Email", value=fmt2(r.email))
+                b1, b2 = st.columns(2)
+                if b1.form_submit_button("Guardar", type="primary"):
+                    if not _norm(nombre):
+                        st.error("El nombre es obligatorio.")
+                    else:
+                        datos.actualizar_contacto(r.id, _norm(nombre), _norm(cargo),
+                                                  _norm(email), _norm(tel))
+                        st.success("Contacto actualizado.")
+                        st.rerun()
+                if b2.form_submit_button("Eliminar"):
+                    datos.eliminar_contacto(r.id)
+                    st.rerun()
+
+    with st.expander("➕ Agregar contacto"):
+        with st.form("cto_form_nuevo", clear_on_submit=True):
+            nombre = st.text_input("Nombre y apellido", key="cto_n_nombre")
+            c1, c2 = st.columns(2)
+            cargo = c1.text_input("Cargo / puesto", key="cto_n_cargo")
+            tel = c2.text_input("Teléfono / celular", key="cto_n_tel")
+            email = st.text_input("Email", key="cto_n_email")
+            if st.form_submit_button("Agregar contacto", type="primary"):
+                if not _norm(nombre):
+                    st.error("El nombre es obligatorio.")
+                else:
+                    datos.agregar_contacto(idcliente, _norm(nombre), _norm(cargo),
+                                           _norm(email), _norm(tel))
+                    st.success("Contacto agregado.")
+                    st.rerun()
+
+
+def _dom_titulo(r) -> str:
+    partes = [fmt(r.etiqueta) if _norm(r.etiqueta) else "Domicilio",
+              (fmt(r.domicilio) + (f" {fmt(r.numero)}" if _norm(r.numero) else ""))
+              if _norm(r.domicilio) else ""]
+    txt = " — ".join(p for p in partes if p)
+    return ("⭐ " if int(r.principal or 0) == 1 else "📍 ") + txt
+
+
+def _ficha_domicilios(idcliente: str) -> None:
+    st.markdown("#### Domicilios")
+    if not _es_mysql():
+        st.caption("Los domicilios adicionales sólo están disponibles en producción (MySQL).")
+        return
+    df = datos.domicilios_de(idcliente)
+    if df.empty:
+        st.caption("Sin domicilios cargados.")
+    for r in df.itertuples():
+        with st.expander(_dom_titulo(r)):
+            _form_domicilio(idcliente, r)
+    with st.expander("➕ Agregar domicilio"):
+        _form_domicilio(idcliente, None)
+
+
+def _form_domicilio(idcliente: str, r) -> None:
+    nuevo = r is None
+    pref = "dom_nuevo" if nuevo else f"dom_{r.id}"
+    provs = cat_provincias()
+    prov_map = {p.provincia: str(p.id) for p in provs.itertuples()}
+    prov_nombres = ["(sin provincia)"] + list(prov_map)
+    idx_prov = 0
+    if not nuevo and _norm(getattr(r, "provincia", None)):
+        prov_actual = fmt2(r.provincia)
+        if prov_actual in prov_map:
+            idx_prov = prov_nombres.index(prov_actual)
+
+    with st.form(f"{pref}_form", clear_on_submit=nuevo):
+        etiqueta = st.text_input("Etiqueta / alias (ej: Planta Norte)",
+                                 value="" if nuevo else fmt2(r.etiqueta), key=f"{pref}_et")
+        c1, c2 = st.columns([4, 1])
+        dom = c1.text_input("Calle", value="" if nuevo else fmt2(r.domicilio),
+                            key=f"{pref}_calle")
+        num = c2.text_input("Número", value="" if nuevo else fmt2(r.numero),
+                            key=f"{pref}_num")
+        prov_lbl = st.selectbox("Provincia", prov_nombres, index=idx_prov,
+                                key=f"{pref}_prov")
+        idprov = prov_map.get(prov_lbl)
+        loc_map, loc_nombres, idx_loc = {}, ["(sin localidad)"], 0
+        if idprov:
+            locs = cat_localidades(idprov)
+            loc_map = {l.localidad: str(l.id) for l in locs.itertuples()}
+            loc_nombres = ["(sin localidad)"] + list(loc_map)
+            if not nuevo and _norm(getattr(r, "localidad", None)):
+                loc_actual = fmt2(r.localidad)
+                if loc_actual in loc_map:
+                    idx_loc = loc_nombres.index(loc_actual)
+        loc_lbl = st.selectbox("Localidad", loc_nombres, index=idx_loc, key=f"{pref}_loc")
+        idloc = loc_map.get(loc_lbl)
+        principal = st.checkbox("Marcar como principal",
+                                value=False if nuevo else int(r.principal or 0) == 1,
+                                key=f"{pref}_pr")
+        b1, b2 = st.columns(2)
+        guardar = b1.form_submit_button("Agregar domicilio" if nuevo else "Guardar",
+                                        type="primary")
+        eliminar = (not nuevo) and b2.form_submit_button("Eliminar")
+        if guardar:
+            if nuevo:
+                datos.agregar_domicilio(idcliente, _norm(etiqueta), _norm(dom),
+                                        _norm(num), idprov, idloc, principal)
+                st.success("Domicilio agregado.")
+            else:
+                datos.actualizar_domicilio(r.id, idcliente, _norm(etiqueta), _norm(dom),
+                                           _norm(num), idprov, idloc, principal)
+                st.success("Domicilio actualizado.")
+            st.rerun()
+        if eliminar:
+            datos.eliminar_domicilio(r.id)
+            st.rerun()
+
+
+def _idcli(idcliente: str):
+    """idcliente con el tipo correcto para las consultas legadas."""
+    return int(idcliente) if str(idcliente).isdigit() else idcliente
+
+
+def _inventario_equipos(idcliente: str) -> None:
+    """Inventario fijo de equipos de la empresa (tipo, marca, capacidad, …)."""
+    st.markdown("#### Equipos registrados")
+    if not _es_mysql():
+        st.caption("El inventario de equipos sólo está disponible en producción (MySQL).")
+        return
+    equipos = cat_equipos()
+    tipo_por_id = {str(r.id): r.nombre for r in equipos.itertuples()}
+    tipo_map = {r.nombre: str(r.id) for r in equipos.itertuples()}
+    tipo_nombres = ["(sin tipo)"] + list(tipo_map)
+
+    df = datos.equipos_empresa_de(idcliente)
+    if df.empty:
+        st.caption("Sin equipos cargados.")
+    for r in df.itertuples():
+        tipo_lbl = tipo_por_id.get(fmt2(r.idequipo), "(sin tipo)")
+        partes = " — ".join(p for p in [
+            tipo_lbl if tipo_lbl != "(sin tipo)" else None,
+            fmt(r.marca) if _norm(r.marca) else None,
+            f"Cap. {fmt(r.capacidad)}" if _norm(r.capacidad) else None] if p)
+        with st.expander("🔧 " + (partes or "Equipo")):
+            _form_equipo(idcliente, r, tipo_nombres, tipo_map, tipo_por_id)
+
+    with st.expander("➕ Agregar equipo"):
+        _form_equipo(idcliente, None, tipo_nombres, tipo_map, tipo_por_id)
+
+
+def _form_equipo(idcliente, r, tipo_nombres, tipo_map, tipo_por_id) -> None:
+    nuevo = r is None
+    pref = "eq_nuevo" if nuevo else f"eq_{r.id}"
+    idx_tipo = 0
+    if not nuevo:
+        tipo_actual = tipo_por_id.get(fmt2(r.idequipo))
+        if tipo_actual in tipo_nombres:
+            idx_tipo = tipo_nombres.index(tipo_actual)
+    with st.form(f"{pref}_form", clear_on_submit=nuevo):
+        tipo_lbl = st.selectbox("Tipo de equipo", tipo_nombres, index=idx_tipo,
+                                key=f"{pref}_tipo")
+        idequipo = tipo_map.get(tipo_lbl)
+        c1, c2 = st.columns(2)
+        marca = c1.text_input("Marca", value="" if nuevo else fmt2(r.marca),
+                              key=f"{pref}_marca")
+        capac = c2.text_input("Capacidad", value="" if nuevo else fmt2(r.capacidad),
+                              key=f"{pref}_capac")
+        c3, c4 = st.columns(2)
+        modelo = c3.text_input("Modelo", value="" if nuevo else fmt2(r.modelo),
+                               key=f"{pref}_modelo")
+        serie = c4.text_input("N° de serie / matrícula",
+                              value="" if nuevo else fmt2(r.serie), key=f"{pref}_serie")
+        anio = st.text_input("Año de fabricación",
+                             value="" if nuevo else fmt2(r.anio_fabrica), key=f"{pref}_anio")
+        b1, b2 = st.columns(2)
+        guardar = b1.form_submit_button("Agregar equipo" if nuevo else "Guardar",
+                                        type="primary")
+        eliminar = (not nuevo) and b2.form_submit_button("Eliminar")
+        if guardar:
+            if anio and not str(anio).strip().isdigit():
+                st.error("El año de fabricación debe ser numérico.")
+            else:
+                if nuevo:
+                    datos.agregar_equipo_empresa(
+                        idcliente, idequipo, _norm(marca), _norm(capac),
+                        _norm(modelo), _norm(serie), _norm(anio))
+                    st.success("Equipo agregado.")
+                else:
+                    datos.actualizar_equipo_empresa(
+                        r.id, idequipo, _norm(marca), _norm(capac),
+                        _norm(modelo), _norm(serie), _norm(anio))
+                    st.success("Equipo actualizado.")
                 st.rerun()
-            except Exception as exc:  # noqa: BLE001
-                st.error(f"No se pudo guardar: {exc}")
+        if eliminar:
+            datos.eliminar_equipo_empresa(r.id)
+            st.rerun()
+
+
+def _ficha_equipos(idcliente: str) -> None:
+    _inventario_equipos(idcliente)
+    st.markdown("#### Historial de inspecciones")
+    df = rep_equipos_empresa(_idcli(idcliente))
+    if df.empty:
+        st.caption("Esta empresa no tiene inspecciones registradas.")
+        return
+    st.caption(f"{len(df)} equipo(s) inspeccionado(s).")
+    vista = pd.DataFrame({
+        "Nº": df["num"].values,
+        "Fecha": df["fecha"].dt.strftime("%d/%m/%Y").fillna("").values
+        if "fecha" in df else "",
+        "Equipo": df["equipo"].fillna("").values,
+        "Marca": df["marca"].fillna("").values,
+        "Serie": df["serie"].fillna("").values,
+        "Oblea": df["oblea"].fillna("").values,
+        "Resultado": df["resultado"].fillna("").values,
+        "Vto.": df["vto"].dt.strftime("%d/%m/%Y").fillna("").values
+        if "vto" in df else "",
+    })
+    st.dataframe(vista, hide_index=True, use_container_width=True)
+
+
+# --------------------------------------------------------------------------- #
+# Pestaña: inventario de equipos por empresa
+# --------------------------------------------------------------------------- #
+def render_equipos_inv() -> None:
+    st.subheader("Equipos por empresa")
+    if not _es_mysql():
+        st.info("El inventario de equipos sólo está disponible en producción (MySQL).")
+        return
+    clientes = cat_clientes()
+    cli_map = {r.nombre: str(r.id) for r in clientes.itertuples()}
+    emp = st.selectbox("Empresa", list(cli_map), index=None,
+                       placeholder="Escribí para buscar la empresa…", key="eqinv_emp")
+    if not emp:
+        st.info("Elegí una empresa para ver y cargar sus equipos.")
+        return
+    st.warning("Los cambios se guardan sobre la base. **Escribe en producción.**")
+    _inventario_equipos(cli_map[emp])
+
+
+# --------------------------------------------------------------------------- #
+# Pestaña: Datos (agrupa Equipos, Usuarios y Empresas en sub-pestañas)
+# --------------------------------------------------------------------------- #
+def render_datos() -> None:
+    sub = []
+    if _puede_escribir():
+        sub.append(("Equipos", render_equipos_inv))
+    if _puede_admin_usuarios():
+        sub.append(("Usuarios", render_usuarios))
+        sub.append(("Empresas", render_empresas))
+    if not sub:
+        st.info("No tenés permisos para esta sección.")
+        return
+    subtabs = st.tabs([s[0] for s in sub])
+    for _st, (_, _fn) in zip(subtabs, sub):
+        with _st:
+            _fn()
 
 
 # --------------------------------------------------------------------------- #
@@ -1862,9 +2191,8 @@ if _puede_escribir():
     _secciones.append(("Editar / estado", lambda: render_editar(MIN_F, MAX_F)))
 _secciones.append(("Informes", render_informes))
 _secciones.append(("Formularios", render_formularios))
-if _puede_admin_usuarios():
-    _secciones.append(("Empresas", render_empresas))
-    _secciones.append(("Usuarios", render_usuarios))
+if _puede_escribir() or _puede_admin_usuarios():
+    _secciones.append(("Datos", render_datos))
 
 _tabs = st.tabs([s[0] for s in _secciones])
 for _t, (_, _fn) in zip(_tabs, _secciones):

@@ -297,6 +297,323 @@ def actualizar_clientes(cambios: list[dict]) -> int:
             raise
 
 
+# --------------------------------------------------------------------------- #
+# Empresas: búsqueda + ficha + contactos y domicilios adicionales
+# (contactos/domicilios viven en tablas auxiliares propias, solo en MySQL)
+# --------------------------------------------------------------------------- #
+def buscar_clientes(texto: str | None = None, limite: int = 200) -> pd.DataFrame:
+    """Empresas activas que coinciden por razón social o CUIT (para el listado)."""
+    sql = ("SELECT IDCLIENTE AS id, RAZON_SOCIAL AS razon_social, CUIT AS cuit, "
+           "EMAIL AS email, TELEFONO_CELULAR AS telefono, DOMICILIO AS domicilio "
+           "FROM clientes WHERE ACTIVO = 1")
+    params: list = []
+    t = (texto or "").strip()
+    if t:
+        sql += " AND (LOWER(RAZON_SOCIAL) LIKE ? OR CUIT LIKE ?)"
+        params += [f"%{t.lower()}%", f"%{t}%"]
+    sql += " ORDER BY RAZON_SOCIAL"
+    df = db.run_query(sql, params or None)
+    for col in df.select_dtypes("object").columns:
+        df[col] = df[col].astype("string").str.strip()
+    return df.head(int(limite))
+
+
+def cliente_detalle(idcliente) -> pd.Series | None:
+    """Datos generales de una empresa (los que usa el sistema legado)."""
+    df = db.run_query(
+        "SELECT IDCLIENTE AS id, RAZON_SOCIAL AS razon_social, CUIT AS cuit, "
+        "EMAIL AS email, TELEFONO_CELULAR AS telefono, DOMICILIO AS domicilio "
+        "FROM clientes WHERE IDCLIENTE = ?", [idcliente])
+    if df.empty:
+        return None
+    for col in df.select_dtypes("object").columns:
+        df[col] = df[col].astype("string").str.strip()
+    return df.iloc[0]
+
+
+_UPD_CLIENTE_BASE = ("UPDATE clientes SET RAZON_SOCIAL=?, CUIT=?, EMAIL=?, "
+                     "TELEFONO_CELULAR=?, DOMICILIO=? WHERE IDCLIENTE=?")
+
+
+def actualizar_cliente_base(idcliente, razon_social, cuit, email,
+                            telefono, domicilio) -> int:
+    """Actualiza los datos generales de UNA empresa. Escribe en PRODUCCIÓN."""
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt(_UPD_CLIENTE_BASE),
+                        [razon_social, cuit, email, telefono, domicilio, idcliente])
+            n = cur.rowcount
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
+# --- Esquema auxiliar (solo MySQL): contactos y domicilios por empresa ------ #
+_DDL_CLIENTE_CONTACTO = (
+    "CREATE TABLE IF NOT EXISTS cliente_contacto ("
+    " id INT AUTO_INCREMENT PRIMARY KEY,"
+    " idcliente VARCHAR(20) NOT NULL,"
+    " nombre VARCHAR(150) NOT NULL,"
+    " cargo VARCHAR(120) NULL,"
+    " email VARCHAR(150) NULL,"
+    " telefono VARCHAR(60) NULL,"
+    " fechaalta DATETIME NULL,"
+    " KEY idx_cliente_contacto (idcliente)"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+_DDL_CLIENTE_DOMICILIO = (
+    "CREATE TABLE IF NOT EXISTS cliente_domicilio ("
+    " id INT AUTO_INCREMENT PRIMARY KEY,"
+    " idcliente VARCHAR(20) NOT NULL,"
+    " etiqueta VARCHAR(120) NULL,"
+    " domicilio VARCHAR(255) NULL,"
+    " numero VARCHAR(30) NULL,"
+    " idprovincia VARCHAR(20) NULL,"
+    " idlocalidad VARCHAR(20) NULL,"
+    " principal TINYINT NOT NULL DEFAULT 0,"
+    " fechaalta DATETIME NULL,"
+    " KEY idx_cliente_domicilio (idcliente)"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+
+_DDL_EQUIPO_EMPRESA = (
+    "CREATE TABLE IF NOT EXISTS equipo_empresa ("
+    " id INT AUTO_INCREMENT PRIMARY KEY,"
+    " idcliente VARCHAR(20) NOT NULL,"
+    " idequipo VARCHAR(20) NULL,"
+    " marca VARCHAR(120) NULL,"
+    " capacidad VARCHAR(120) NULL,"
+    " modelo VARCHAR(120) NULL,"
+    " serie VARCHAR(120) NULL,"
+    " anio_fabrica VARCHAR(10) NULL,"
+    " fechaalta DATETIME NULL,"
+    " KEY idx_equipo_empresa (idcliente)"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+
+def asegurar_esquema_empresas() -> None:
+    """Crea las tablas de contactos/domicilios/equipos si no existen. Solo en MySQL."""
+    if db.ENGINE != "mysql":
+        return
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(_DDL_CLIENTE_CONTACTO)
+            cur.execute(_DDL_CLIENTE_DOMICILIO)
+            cur.execute(_DDL_EQUIPO_EMPRESA)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+# --- Contactos -------------------------------------------------------------- #
+def contactos_de(idcliente) -> pd.DataFrame:
+    """Contactos adicionales de una empresa."""
+    cols = ["id", "nombre", "cargo", "email", "telefono"]
+    if db.ENGINE != "mysql":
+        return pd.DataFrame(columns=cols)
+    df = db.run_query(
+        "SELECT id, nombre, cargo, email, telefono FROM cliente_contacto "
+        "WHERE idcliente = ? ORDER BY nombre", [str(idcliente)])
+    for col in df.select_dtypes("object").columns:
+        df[col] = df[col].astype("string").str.strip()
+    return df
+
+
+def agregar_contacto(idcliente, nombre, cargo=None, email=None,
+                     telefono=None) -> None:
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt(
+                "INSERT INTO cliente_contacto "
+                "(idcliente, nombre, cargo, email, telefono, fechaalta) "
+                "VALUES (?,?,?,?,?,?)"),
+                [str(idcliente), nombre, cargo, email, telefono, dt.datetime.now()])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def actualizar_contacto(id_contacto, nombre, cargo=None, email=None,
+                        telefono=None) -> int:
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt(
+                "UPDATE cliente_contacto SET nombre=?, cargo=?, email=?, telefono=? "
+                "WHERE id=?"), [nombre, cargo, email, telefono, int(id_contacto)])
+            n = cur.rowcount
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def eliminar_contacto(id_contacto) -> int:
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt("DELETE FROM cliente_contacto WHERE id=?"),
+                        [int(id_contacto)])
+            n = cur.rowcount
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
+# --- Domicilios ------------------------------------------------------------- #
+def domicilios_de(idcliente) -> pd.DataFrame:
+    """Domicilios adicionales de una empresa, con nombre de localidad/provincia."""
+    cols = ["id", "etiqueta", "domicilio", "numero", "idprovincia",
+            "idlocalidad", "principal", "provincia", "localidad"]
+    if db.ENGINE != "mysql":
+        return pd.DataFrame(columns=cols)
+    df = db.run_query(
+        "SELECT cd.id, cd.etiqueta, cd.domicilio, cd.numero, cd.idprovincia, "
+        "cd.idlocalidad, cd.principal, pr.provincia, lo.localidad "
+        "FROM cliente_domicilio cd "
+        "LEFT JOIN provincias pr ON pr.id = cd.idprovincia "
+        "LEFT JOIN localidades lo ON lo.id = cd.idlocalidad "
+        "AND lo.id_provincia = cd.idprovincia "
+        "WHERE cd.idcliente = ? ORDER BY cd.principal DESC, cd.id", [str(idcliente)])
+    for col in df.select_dtypes("object").columns:
+        df[col] = df[col].astype("string").str.strip()
+    return df
+
+
+def _reset_principal(cur, idcliente) -> None:
+    cur.execute(db.adapt(
+        "UPDATE cliente_domicilio SET principal=0 WHERE idcliente=?"),
+        [str(idcliente)])
+
+
+def agregar_domicilio(idcliente, etiqueta=None, domicilio=None, numero=None,
+                      idprovincia=None, idlocalidad=None, principal=False) -> None:
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            if principal:
+                _reset_principal(cur, idcliente)
+            cur.execute(db.adapt(
+                "INSERT INTO cliente_domicilio "
+                "(idcliente, etiqueta, domicilio, numero, idprovincia, idlocalidad, "
+                " principal, fechaalta) VALUES (?,?,?,?,?,?,?,?)"),
+                [str(idcliente), etiqueta, domicilio, numero, idprovincia,
+                 idlocalidad, 1 if principal else 0, dt.datetime.now()])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def actualizar_domicilio(id_dom, idcliente, etiqueta=None, domicilio=None,
+                         numero=None, idprovincia=None, idlocalidad=None,
+                         principal=False) -> int:
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            if principal:
+                _reset_principal(cur, idcliente)
+            cur.execute(db.adapt(
+                "UPDATE cliente_domicilio SET etiqueta=?, domicilio=?, numero=?, "
+                "idprovincia=?, idlocalidad=?, principal=? WHERE id=?"),
+                [etiqueta, domicilio, numero, idprovincia, idlocalidad,
+                 1 if principal else 0, int(id_dom)])
+            n = cur.rowcount
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def eliminar_domicilio(id_dom) -> int:
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt("DELETE FROM cliente_domicilio WHERE id=?"),
+                        [int(id_dom)])
+            n = cur.rowcount
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
+# --- Inventario de equipos por empresa -------------------------------------- #
+def equipos_empresa_de(idcliente) -> pd.DataFrame:
+    """Equipos registrados (inventario fijo) de una empresa."""
+    cols = ["id", "idequipo", "marca", "capacidad", "modelo", "serie", "anio_fabrica"]
+    if db.ENGINE != "mysql":
+        return pd.DataFrame(columns=cols)
+    df = db.run_query(
+        "SELECT id, idequipo, marca, capacidad, modelo, serie, anio_fabrica "
+        "FROM equipo_empresa WHERE idcliente = ? ORDER BY id", [str(idcliente)])
+    for col in df.select_dtypes("object").columns:
+        df[col] = df[col].astype("string").str.strip()
+    return df
+
+
+def agregar_equipo_empresa(idcliente, idequipo=None, marca=None, capacidad=None,
+                           modelo=None, serie=None, anio=None) -> None:
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt(
+                "INSERT INTO equipo_empresa "
+                "(idcliente, idequipo, marca, capacidad, modelo, serie, anio_fabrica, "
+                " fechaalta) VALUES (?,?,?,?,?,?,?,?)"),
+                [str(idcliente),
+                 None if idequipo is None else str(idequipo),
+                 marca, capacidad, modelo, serie, anio, dt.datetime.now()])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def actualizar_equipo_empresa(id_eq, idequipo=None, marca=None, capacidad=None,
+                              modelo=None, serie=None, anio=None) -> int:
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt(
+                "UPDATE equipo_empresa SET idequipo=?, marca=?, capacidad=?, "
+                "modelo=?, serie=?, anio_fabrica=? WHERE id=?"),
+                [None if idequipo is None else str(idequipo),
+                 marca, capacidad, modelo, serie, anio, int(id_eq)])
+            n = cur.rowcount
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def eliminar_equipo_empresa(id_eq) -> int:
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt("DELETE FROM equipo_empresa WHERE id=?"),
+                        [int(id_eq)])
+            n = cur.rowcount
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
 _SQL_REPORTE = (
     "SELECT CAST(s.NUM AS BIGINT) AS num, s.FECHA AS fecha, c.RAZON_SOCIAL AS empresa, "
     "e.DESCRIPCION AS equipo, ip.MARCA_EQUIPO AS marca, ip.SERIE_EQUIPO AS serie, "
