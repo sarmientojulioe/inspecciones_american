@@ -154,22 +154,27 @@ rango de fechas, cliente, equipo y provincia; KPIs (inspecciones, equipos, clien
 proximos a vencer), graficos (por mes, por equipo, por cliente) y exportacion a
 Excel y PDF.
 
-## 7. Migración a MySQL (en curso)
+## 7. Migración a MySQL — CUTOVER HECHO
+
+> **Estado actual:** el **cutover ya se hizo**. Todo se maneja desde **MySQL en la web**
+> (Easypanel, `https://inspecciones.americanad.ar/`, `DB_ENGINE=mysql`). El MySQL es la
+> **única fuente de verdad**; el PowerBuilder / SQL Anywhere ya **no** se usa para cargar
+> ni editar.
+>
+> ⚠️ **NO volver a importar el dump.** `actualizar_dump.bat` y
+> `python -m migracion.generar_dump` / `migrar_mysql` hacen **DROP + CREATE + recarga** desde
+> SQL Anywhere: re-importarlos **pisaría** todo lo cargado/editado en la web. Esos scripts
+> quedan solo como referencia histórica de la transición.
 
 El proyecto puede operar contra **SQL Anywhere** o **MySQL**, según `DB_ENGINE` en `.env`
 (`anywhere` | `mysql`). Toda la capa de datos pasa por `db.py`, que adapta el SQL al motor
 (`?`→`%s`, `CAST AS BIGINT/INTEGER`→`SIGNED`, `TOP n`→`LIMIT n`).
 
-- **Migrar/sincronizar datos** SQL Anywhere → MySQL (módulo inspección de equipos):
-  `python -m migracion.migrar_mysql` (lee de Anywhere por ODBC, recrea y recarga ~17 tablas
-  en MySQL; es re-ejecutable, sirve como sync de transición). Config MySQL en `.env`
-  (`MYSQL_HOST/PORT/USER/PASSWORD/DB`).
-- En desarrollo se usa un **MySQL 9.6 local** (servicio `MySQL`, puerto **3307** para no
-  chocar con un MySQL 5.7 preexistente en 3306).
-- Para correr la app contra MySQL: poner `DB_ENGINE=mysql` en `.env`.
-
-Pendiente: deploy en VPS DigitalOcean (Managed MySQL + nginx + HTTPS + login) y la sync
-periódica programada desde la red local.
+- En desarrollo se puede usar un **MySQL local** (`DB_ENGINE=mysql`, puerto 3307 para no
+  chocar con un MySQL preexistente en 3306).
+- Los scripts de migración (`migracion.migrar_mysql`, `migracion.generar_dump`) servían para
+  la **sync de transición** (SQL Anywhere → MySQL) y **ya no deben ejecutarse** contra la
+  base productiva (ver aviso de arriba).
 
 ## 8. Dejar la app siempre encendida (opcional)
 

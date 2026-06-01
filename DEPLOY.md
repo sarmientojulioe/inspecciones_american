@@ -53,24 +53,25 @@ transición**, programarlo (Programador de tareas de Windows) cada X horas hasta
 La app ya pide **usuario y clave** validando contra `LICUSUARIO` (los mismos usuarios del
 sistema). En la VPS valida contra la tabla `licusuario` migrada a MySQL.
 
-## 4b. Sync manual por volcado (modo elegido)
+## 4b. Sync manual por volcado (HISTÓRICO — ya no usar)
 
-El MySQL de Easypanel es **interno** (no expuesto). La actualización se hace por volcado:
+> ⚠️ **CUTOVER HECHO: no re-importar el dump.** MySQL es ahora la **fuente única de verdad**
+> y la app web escribe directamente. El volcado hace **DROP + CREATE + recarga** desde SQL
+> Anywhere, así que re-importarlo **borraría** todo lo cargado/editado en la web. Esta sección
+> queda solo como referencia histórica de cómo funcionaba la sync durante la transición.
+
+Cómo funcionaba (transición): el MySQL de Easypanel es **interno** (no expuesto), así que la
+actualización se hacía por volcado:
 
 1. En la máquina on-prem, ejecutar **`actualizar_dump.bat`** (o `python -m migracion.generar_dump`)
    → genera `inspecciones_american.sql.gz` leyendo de SQL Anywhere.
 2. En phpMyAdmin, base `inspecciones_american` → **Importar** ese `.sql.gz`.
 
-> **Importante (evitar pérdida de datos):** el dump hace DROP + CREATE + recarga, es decir
-> **pisa** el contenido del MySQL con lo que hay en SQL Anywhere. Durante la transición, la
-> **fuente de verdad sigue siendo el PowerBuilder/SQL Anywhere**: hacé la carga/edición ahí
-> (o en la web, pero entonces NO re-importes el dump, porque borraría esos cambios). Recién en
-> el **cutover** se deja de re-importar y la app web pasa a escribir como fuente única.
+## 5. Cutover (COMPLETADO)
 
-## 5. Cutover
-
-Cuando se deje de usar el PowerBuilder, detener la sync (no re-importar más): el MySQL pasa
-a ser la única fuente de verdad y la app escribe directamente ahí.
+El cutover **ya se realizó**: se dejó de usar el PowerBuilder y se detuvo la sync. El MySQL de
+la web es la **única fuente de verdad** y la app escribe directamente ahí. No re-importar más
+el dump (ver aviso en 4b).
 
 ## 6. Deploy automático (GitHub → Easypanel)
 
