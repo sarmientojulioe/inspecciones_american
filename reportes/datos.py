@@ -614,7 +614,7 @@ def crear_inspeccion(cabecera: dict, equipos: list[dict], dry_run: bool = False)
 # --------------------------------------------------------------------------- #
 # Vista editable de inspecciones (estado y campos clave)
 # --------------------------------------------------------------------------- #
-_SQL_EDICION = """
+_SQL_EDICION_BASE = """
 SELECT d.IDSOLICITUDDETALLE AS idd, s.IDSOLICITUD AS idsol, s.ACTIVO AS activo_sol,
        CAST(s.NUM AS BIGINT) AS num, s.FECHA AS fecha,
        c.RAZON_SOCIAL AS empresa, e.DESCRIPCION AS equipo,
@@ -629,18 +629,43 @@ LEFT JOIN equipos e        ON e.IDEQUIPO = d.IDEQUIPO
 JOIN informe_preliminar ip ON ip.IDSOLICITUDDETALLE = d.IDSOLICITUDDETALLE
 LEFT JOIN tiposresultado tr ON tr.IDRESULTADO = ip.IDRESULTADO
 LEFT JOIN licusuario u      ON u.IDUSUARIO = ip.IDUSUARIO
-WHERE s.IDSERVICIO = 1 AND s.FECHA BETWEEN ? AND ?
-ORDER BY s.FECHA DESC, num
+WHERE s.IDSERVICIO = 1
 """
 
+_SQL_EDICION = _SQL_EDICION_BASE + " AND s.FECHA BETWEEN ? AND ? ORDER BY s.FECHA DESC, num"
 
-def listar_para_edicion(fecha_desde: dt.date, fecha_hasta: dt.date) -> pd.DataFrame:
-    df = db.run_query(_SQL_EDICION, [fecha_desde, fecha_hasta])
+
+def _post_edicion(df: pd.DataFrame) -> pd.DataFrame:
     df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
     df["vto"] = pd.to_datetime(df["vto"], errors="coerce")
     for col in df.select_dtypes("object").columns:
         df[col] = df[col].astype("string").str.strip()
     return df
+
+
+def listar_para_edicion(fecha_desde: dt.date, fecha_hasta: dt.date) -> pd.DataFrame:
+    return _post_edicion(db.run_query(_SQL_EDICION, [fecha_desde, fecha_hasta]))
+
+
+def buscar_inspecciones(num=None, oblea: str | None = None,
+                        idinspector=None) -> pd.DataFrame:
+    """Busca equipos inspeccionados por Nº de inspección, oblea (contiene) y/o
+    inspector. Devuelve la misma forma que listar_para_edicion. Sin filtros -> vacío."""
+    sql = _SQL_EDICION_BASE
+    params: list = []
+    if num not in (None, ""):
+        sql += " AND CAST(s.NUM AS BIGINT) = ?"
+        params.append(int(num))
+    if oblea:
+        sql += " AND LOWER(ip.IDOBLEA) LIKE ?"
+        params.append(f"%{str(oblea).strip().lower()}%")
+    if idinspector not in (None, ""):
+        sql += " AND ip.IDUSUARIO = ?"
+        params.append(idinspector)
+    if not params:
+        return pd.DataFrame()
+    sql += " ORDER BY s.FECHA DESC, num"
+    return _post_edicion(db.run_query(sql, params))
 
 
 def tiposresultado_tipo2() -> pd.DataFrame:

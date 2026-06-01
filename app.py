@@ -186,6 +186,11 @@ def cached_edicion(desde: dt.date, hasta: dt.date) -> pd.DataFrame:
     return datos.listar_para_edicion(desde, hasta)
 
 
+@st.cache_data(ttl=120, show_spinner="Buscando...")
+def buscar_cached(num, oblea, idinsp) -> pd.DataFrame:
+    return datos.buscar_inspecciones(num, oblea, idinsp)
+
+
 @st.cache_data(ttl=120)
 def ultimo_equipo(idcliente: int, idequipo: int):
     return datos.ultimo_informe_equipo(idcliente, idequipo)
@@ -1045,15 +1050,144 @@ def _envio_masivo(dias: int) -> None:
             st.error("No se pudieron enviar:\n- " + "\n- ".join(errores))
 
 
+def _ficha_inspeccion(row) -> None:
+    """Ficha de un equipo inspeccionado: todos los datos + edición de lo guardado."""
+    idd = int(row["idd"])
+    num = int(row["num"]) if pd.notna(row["num"]) else idd
+    fecha_txt = row["fecha"].strftime("%d/%m/%Y") if pd.notna(row["fecha"]) else ""
+    st.markdown(f"### Ficha — Inspección Nº {num}")
+    i1, i2, i3 = st.columns(3)
+    i1.write(f"**Fecha:** {fecha_txt}")
+    i2.write(f"**Empresa:** {row['empresa'] or ''}")
+    i3.write(f"**Equipo:** {row['equipo'] or ''}")
+
+    res2 = cat_tiposresultado2()
+    nombre2id = {r.nombre: r.id for r in res2.itertuples()}
+    estado_opts = [n for n in ("Pendiente", "Favorable", "Desfavorable") if n in nombre2id]
+    cur_estado = row["estado"] or ""
+    if cur_estado and cur_estado not in estado_opts:
+        estado_opts.append(cur_estado)
+    usuarios = cat_usuarios()
+    name2id = {r.nombre: r.id for r in usuarios.itertuples()}
+    insp_opts = [""] + list(usuarios["nombre"])
+    cur_insp = row["inspector"] or ""
+
+    with st.form(f"ficha_{idd}"):
+        c1, c2 = st.columns(2)
+        estado = c1.selectbox("Estado", estado_opts,
+                              index=estado_opts.index(cur_estado) if cur_estado in estado_opts else 0)
+        inspector = c2.selectbox("Inspector", insp_opts,
+                                 index=insp_opts.index(cur_insp) if cur_insp in insp_opts else 0)
+        c3, c4 = st.columns(2)
+        oblea = c3.text_input("Oblea", value=row["oblea"] or "")
+        marca = c4.text_input("Marca", value=row["marca"] or "")
+        c5, c6 = st.columns(2)
+        serie = c5.text_input("N° Serie", value=row["serie"] or "")
+        matricula = c6.text_input("Matrícula", value=row["matricula"] or "")
+        vto_default = row["vto"].date() if pd.notna(row["vto"]) else None
+        vto = st.date_input("Vto. inspección", value=vto_default, format="DD/MM/YYYY")
+        obs = st.text_area("Observaciones", value=row["obs"] or "")
+        confirmar = st.checkbox("Confirmo guardar los cambios en la base de producción")
+        guardar = st.form_submit_button("Guardar cambios", type="primary")
+
+    if guardar:
+        if not confirmar:
+            st.warning("Tildá la confirmación para guardar.")
+        else:
+            cambio = dict(
+                idd=idd, oblea=_norm(oblea), marca=_norm(marca), serie=_norm(serie),
+                matricula=_norm(matricula),
+                vto=None if (vto is None or pd.isna(vto)) else vto,
+                idresultado=nombre2id.get(estado),
+                idusuario=name2id.get(inspector) if inspector else None,
+                obs=_norm(obs))
+            en_uso = datos.obleas_en_uso([cambio["oblea"]] if cambio["oblea"] else [], [idd])
+            if not en_uso.empty:
+                detalle = "; ".join(f"{r.oblea} (ya usada en Nº {int(r.num)} - {r.empresa})"
+                                    for r in en_uso.itertuples())
+                st.error("La oblea ya está en uso en otra inspección: " + detalle)
+            else:
+                try:
+                    datos.actualizar_informes([cambio], dry_run=False)
+                    st.cache_data.clear()
+                    st.success("Cambios guardados.")
+                    st.rerun()
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"No se pudo guardar: {exc}")
+
+    st.markdown("**Documentos**")
+    d1, d2 = st.columns(2)
+    with d1:
+        st.download_button(
+            "Informe Preliminar (PDF)", data=pdf_preliminar(idd),
+            file_name=f"informe_preliminar_{num}_{idd}.pdf", mime="application/pdf",
+            key=f"ficha_prelim_{idd}", use_container_width=True)
+    with d2:
+        if _es_favorable(cur_estado):
+            st.download_button(
+                "Certificación Periódica (PDF)", data=pdf_certificado(idd),
+                file_name=f"certificacion_{num}_{idd}.pdf", mime="application/pdf",
+                key=f"ficha_cert_{idd}", use_container_width=True)
+    _bloque_fotos(idd, num)
+
+
+def _buscar_inspeccion() -> None:
+    st.caption("Buscá por Nº de inspección, oblea y/o inspector. Hacé clic en una fila "
+               "para abrir la ficha y editar los datos guardados.")
+    usuarios = cat_usuarios()
+    insp_map = {r.nombre: r.id for r in usuarios.itertuples()}
+    b1, b2, b3 = st.columns(3)
+    num = b1.text_input("Nº de inspección", key="bus_num")
+    oblea = b2.text_input("Oblea", key="bus_oblea")
+    insp_nom = b3.selectbox("Inspector", ["(cualquiera)"] + list(insp_map), key="bus_insp")
+    idinsp = insp_map.get(insp_nom) if insp_nom != "(cualquiera)" else None
+
+    num_v = (num or "").strip()
+    if not num_v and not (oblea or "").strip() and idinsp is None:
+        st.info("Ingresá al menos un criterio de búsqueda.")
+        return
+    try:
+        num_param = int(num_v) if num_v else None
+    except ValueError:
+        st.warning("El Nº de inspección debe ser numérico.")
+        return
+
+    res = buscar_cached(num_param, (oblea or "").strip() or None, idinsp)
+    if res.empty:
+        st.info("No se encontraron inspecciones con esos criterios.")
+        return
+    disp = pd.DataFrame({
+        "Nº": res["num"].values,
+        "Fecha": res["fecha"].dt.strftime("%d/%m/%Y").values,
+        "Empresa": res["empresa"].fillna("").values,
+        "Equipo": res["equipo"].fillna("").values,
+        "Oblea": res["oblea"].fillna("").values,
+        "Estado": res["estado"].fillna("").values,
+        "Inspector": res["inspector"].fillna("").values,
+    })
+    st.caption(f"{len(disp)} resultado(s) — hacé clic en una fila para abrir la ficha.")
+    event = st.dataframe(
+        disp, hide_index=True, use_container_width=True,
+        selection_mode="single-row", on_select="rerun", key="bus_tabla")
+    rows = event.selection.rows if (event and event.selection) else []
+    if rows:
+        st.divider()
+        _ficha_inspeccion(res.iloc[rows[0]])
+
+
 def render_informes() -> None:
     st.subheader("Informes")
     clientes = cat_clientes()
     cli_map = {r.nombre: (r.id, r.email) for r in clientes.itertuples()}
 
     tipo = st.radio("Tipo de informe",
-                    ["Equipos por empresa", "Próximos a vencer", "Vencidos",
-                     "Resumen por estado"], horizontal=True)
+                    ["Buscar inspección", "Equipos por empresa", "Próximos a vencer",
+                     "Vencidos", "Resumen por estado"], horizontal=True)
     idc = email = dias = None
+
+    if tipo == "Buscar inspección":
+        _buscar_inspeccion()
+        return
 
     if tipo == "Equipos por empresa":
         emp = st.selectbox("Empresa", list(cli_map), index=None,
