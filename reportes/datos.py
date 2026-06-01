@@ -819,6 +819,92 @@ def equipos_lista() -> pd.DataFrame:
         "procedimiento, acredita_oaa FROM equipos WHERE ACTIVO = 1 ORDER BY DESCRIPCION")
 
 
+# --------------------------------------------------------------------------- #
+# Catálogo general de tipos de equipo (tabla legada `equipos`) — administración.
+# La hoja de campo (checklist) de cada tipo vive en `hojacampo` (cruza IDEQUIPO
+# con hojacampo_grupo/hojacampo_item). Aquí solo se muestra cuántos ítems tiene.
+# --------------------------------------------------------------------------- #
+def tipos_equipo_admin() -> pd.DataFrame:
+    """Todos los tipos de equipo (incluye inactivos) + cantidad de ítems de checklist."""
+    return db.run_query(
+        "SELECT e.IDEQUIPO AS id, e.DESCRIPCION AS descripcion, e.nombre_informe, "
+        "e.NORMA_IRAM AS norma, e.procedimiento, e.acredita_oaa, e.ACTIVO AS activo, "
+        "(SELECT COUNT(*) FROM hojacampo h "
+        " WHERE h.IDEQUIPO = e.IDEQUIPO AND h.ACTIVO = 1) AS items_checklist "
+        "FROM equipos e ORDER BY e.DESCRIPCION")
+
+
+_UPD_TIPO_EQUIPO = ("UPDATE equipos SET DESCRIPCION=?, nombre_informe=?, NORMA_IRAM=?, "
+                    "procedimiento=?, acredita_oaa=?, ACTIVO=? WHERE IDEQUIPO=?")
+
+
+def actualizar_tipos_equipo(cambios: list[dict]) -> int:
+    """Actualiza datos de tipos de equipo (tabla legada). Escribe en PRODUCCIÓN."""
+    afectadas = 0
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            for c in cambios:
+                cur.execute(db.adapt(_UPD_TIPO_EQUIPO), [
+                    c.get("descripcion"), c.get("nombre_informe"), c.get("norma"),
+                    c.get("procedimiento"), 1 if c.get("acredita_oaa") else 0,
+                    1 if c.get("activo") else 0, c["id"]])
+                afectadas += cur.rowcount
+            conn.commit()
+            return afectadas
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def agregar_tipo_equipo(descripcion: str, nombre_informe=None, norma=None,
+                        procedimiento=None, acredita_oaa: bool = True) -> int:
+    """Crea un tipo de equipo nuevo (IDEQUIPO = MAX+1). Escribe en PRODUCCIÓN.
+
+    Completa automáticamente columnas NOT NULL sin default (introspección en
+    MySQL) para no romper por constraints del esquema legado."""
+    valores: dict = {
+        "DESCRIPCION": descripcion,
+        "nombre_informe": nombre_informe,
+        "NORMA_IRAM": norma,
+        "procedimiento": procedimiento,
+        "acredita_oaa": 1 if acredita_oaa else 0,
+        "ACTIVO": 1,
+    }
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt(
+                "SELECT COALESCE(MAX(CAST(IDEQUIPO AS INTEGER)),0)+1 FROM equipos"))
+            idequipo = int(cur.fetchone()[0])
+            valores["IDEQUIPO"] = idequipo
+            if db.ENGINE == "mysql":
+                cur.execute(
+                    "SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.columns "
+                    "WHERE table_schema = DATABASE() AND table_name = 'equipos' "
+                    "AND IS_NULLABLE = 'NO' AND COLUMN_DEFAULT IS NULL "
+                    "AND EXTRA NOT LIKE '%auto_increment%'")
+                num = {"int", "bigint", "smallint", "tinyint", "mediumint",
+                       "decimal", "numeric", "float", "double", "bit"}
+                fechas = {"date", "datetime", "timestamp"}
+                for col, tipo in cur.fetchall():
+                    if col in valores:
+                        continue
+                    t = str(tipo).lower()
+                    valores[col] = (0 if t in num
+                                    else dt.datetime.now() if t in fechas else "")
+            cols = list(valores)
+            ph = ",".join(["?"] * len(cols))
+            cur.execute(db.adapt(
+                f"INSERT INTO equipos ({','.join(cols)}) VALUES ({ph})"),
+                [valores[c] for c in cols])
+            conn.commit()
+            return idequipo
+        except Exception:
+            conn.rollback()
+            raise
+
+
 def provincias_lista() -> pd.DataFrame:
     return db.run_query("SELECT id, provincia FROM provincias ORDER BY provincia")
 

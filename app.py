@@ -297,6 +297,11 @@ def cat_equipos() -> pd.DataFrame:
     return datos.equipos_lista()
 
 
+@st.cache_data(ttl=120)
+def cat_tipos_admin() -> pd.DataFrame:
+    return datos.tipos_equipo_admin()
+
+
 @st.cache_data(ttl=3600)
 def cat_provincias() -> pd.DataFrame:
     return datos.provincias_lista()
@@ -2118,13 +2123,100 @@ def render_inspecciones_menu(min_f: dt.date, max_f: dt.date) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Pestaña: Datos (agrupa Equipos, Usuarios, Empresas y KPI en sub-pestañas)
+# Pestaña: Tipos de equipo (catálogo general — tabla legada `equipos`)
+# --------------------------------------------------------------------------- #
+def render_tipos_equipo() -> None:
+    st.subheader("Tipos de equipo (catálogo general)")
+    if not _puede_admin_usuarios():
+        st.error("No tenés permisos para editar el catálogo de equipos.")
+        return
+    st.warning("Es el catálogo del **sistema** (tabla equipos). **Escribe en producción** "
+               "y afecta también al sistema legado.")
+    base = cat_tipos_admin()
+    q = st.text_input("Buscar tipo de equipo", key="te_busq",
+                      placeholder="Descripción…")
+    if _norm(q):
+        base = base[base["descripcion"].fillna("").str.contains(q, case=False, na=False)]
+    ed = pd.DataFrame({
+        "id": base["id"].values,
+        "Descripción": base["descripcion"].fillna("").values,
+        "Nombre informe": base["nombre_informe"].fillna("").values,
+        "Norma IRAM": base["norma"].fillna("").values,
+        "Procedimiento": base["procedimiento"].fillna("").values,
+        "Acredita OAA": (base["acredita_oaa"] == 1).values,
+        "Activo": (base["activo"] == 1).values,
+        "Checklist (ítems)": base["items_checklist"].fillna(0).astype(int).values,
+    })
+    original = ed.copy()
+    st.caption(f"{len(ed)} tipo(s). Editá las celdas y guardá. "
+               "'Checklist (ítems)' es de solo lectura.")
+    cols = ["Descripción", "Nombre informe", "Norma IRAM", "Procedimiento",
+            "Acredita OAA", "Activo"]
+    edited = st.data_editor(
+        ed, hide_index=True, use_container_width=True, key="editor_tipos",
+        column_order=cols + ["Checklist (ítems)"],
+        column_config={
+            "Descripción": st.column_config.TextColumn(required=True),
+            "Procedimiento": st.column_config.TextColumn(width="medium"),
+            "Acredita OAA": st.column_config.CheckboxColumn(),
+            "Activo": st.column_config.CheckboxColumn(
+                help="Destildá para dar de baja el tipo de equipo"),
+            "Checklist (ítems)": st.column_config.NumberColumn(disabled=True, format="%d"),
+        })
+    if st.button("Guardar cambios", type="primary", key="te_guardar"):
+        cambios = []
+        for i in range(len(edited)):
+            nue, vie = edited.iloc[i], original.iloc[i]
+            if any(_cambio(nue[c], vie[c]) for c in cols):
+                cambios.append(dict(
+                    id=nue["id"], descripcion=_norm(nue["Descripción"]),
+                    nombre_informe=_norm(nue["Nombre informe"]),
+                    norma=_norm(nue["Norma IRAM"]),
+                    procedimiento=_norm(nue["Procedimiento"]),
+                    acredita_oaa=bool(nue["Acredita OAA"]),
+                    activo=bool(nue["Activo"])))
+        if not cambios:
+            st.info("No hay cambios para guardar.")
+        else:
+            try:
+                n = datos.actualizar_tipos_equipo(cambios)
+                st.cache_data.clear()
+                st.success(f"{n} tipo(s) actualizado(s).")
+                st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"No se pudo guardar: {exc}")
+
+    with st.expander("➕ Nuevo tipo de equipo"):
+        with st.form("te_nuevo", clear_on_submit=True):
+            d = st.text_input("Descripción", key="te_n_desc")
+            ni = st.text_input("Nombre para el informe", key="te_n_inf")
+            c1, c2 = st.columns(2)
+            nm = c1.text_input("Norma IRAM", key="te_n_norma")
+            oaa = c2.checkbox("Acredita OAA", value=True, key="te_n_oaa")
+            pr = st.text_input("Procedimiento", key="te_n_proc")
+            if st.form_submit_button("Crear tipo", type="primary"):
+                if not _norm(d):
+                    st.error("La descripción es obligatoria.")
+                else:
+                    try:
+                        nid = datos.agregar_tipo_equipo(_norm(d), _norm(ni), _norm(nm),
+                                                        _norm(pr), oaa)
+                        st.cache_data.clear()
+                        st.success(f"Tipo creado (id {nid}).")
+                        st.rerun()
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"No se pudo crear: {exc}")
+
+
+# --------------------------------------------------------------------------- #
+# Pestaña: Datos (agrupa Equipos, Usuarios, Empresas, Tipos y KPI en sub-pestañas)
 # --------------------------------------------------------------------------- #
 def render_datos() -> None:
     sub = []
     if _puede_escribir():
         sub.append(("Equipos por empresa", render_equipos_inv))
     if _puede_admin_usuarios():
+        sub.append(("Tipos de equipo", render_tipos_equipo))
         sub.append(("Usuarios", render_usuarios))
         sub.append(("Empresas", render_empresas))
         sub.append(("KPI y Objetivos", render_kpi))
