@@ -1305,6 +1305,29 @@ def agregar_item_checklist(idequipo, idgrupo, descripcion: str):
             raise
 
 
+def agregar_items_checklist(idequipo, idgrupo, descripciones) -> int:
+    """Crea VARIOS ítems nuevos y los vincula al tipo de equipo, en una sola
+    transacción. Devuelve cuántos creó. Solo MySQL."""
+    if db.ENGINE != "mysql":
+        raise RuntimeError("Disponible solo en producción (MySQL).")
+    descripciones = [d.strip() for d in descripciones if d and d.strip()]
+    if not descripciones:
+        return 0
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            for desc in descripciones:
+                iditem = _insert_legacy(cur, "hojacampo_item", {"descripcion": desc})
+                _insert_legacy(cur, "hojacampo", {
+                    "IDEQUIPO": idequipo, "IDGRUPO": idgrupo,
+                    "ITEM": iditem, "ACTIVO": 1})
+            conn.commit()
+            return len(descripciones)
+        except Exception:
+            conn.rollback()
+            raise
+
+
 def quitar_item_checklist(idequipo, hc_pk=None, iditem=None) -> int:
     """Da de baja lógica (ACTIVO=0) un ítem del checklist de un tipo de equipo."""
     pk = _hojacampo_pk()

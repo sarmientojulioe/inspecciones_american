@@ -2272,13 +2272,13 @@ def render_tipos_equipo() -> None:
                     except Exception as exc:  # noqa: BLE001
                         st.error(f"No se pudo crear: {exc}")
 
-    st.divider()
-    _editor_checklist()
 
-
-def _editor_checklist() -> None:
+def render_checklist() -> None:
     """Editor de la hoja de campo (checklist) por tipo de equipo."""
-    st.markdown("#### Checklist (hoja de campo)")
+    st.subheader("Checklist (hoja de campo) por tipo de equipo")
+    if not _puede_admin_usuarios():
+        st.error("No tenés permisos para editar el checklist.")
+        return
     if not _es_mysql():
         st.caption("La edición del checklist sólo está disponible en producción (MySQL).")
         return
@@ -2308,24 +2308,28 @@ def _editor_checklist() -> None:
 
     grupos = datos.grupos_checklist()
     gmap = {r.descripcion: r.id for r in grupos.itertuples()}
-    with st.expander("➕ Agregar ítem"):
+    with st.expander("➕ Agregar ítems", expanded=df.empty):
         with st.form("chk_add_item", clear_on_submit=True):
             gsel = st.selectbox("Grupo", ["(nuevo grupo)"] + list(gmap), key="chk_g")
             gnuevo = (st.text_input("Nombre del grupo nuevo", key="chk_gnuevo")
                       if gsel == "(nuevo grupo)" else "")
-            item = st.text_input("Descripción del ítem", key="chk_item")
-            if st.form_submit_button("Agregar ítem", type="primary"):
-                if not _norm(item):
-                    st.error("La descripción del ítem es obligatoria.")
+            items_txt = st.text_area(
+                "Ítems — uno por línea", key="chk_items", height=160,
+                placeholder="Estado de frenos\nNivel de aceite\nLuces y señalización")
+            st.caption("Cada línea se agrega como un ítem nuevo del checklist.")
+            if st.form_submit_button("Agregar ítems", type="primary"):
+                descs = [ln.strip() for ln in (items_txt or "").splitlines() if ln.strip()]
+                if not descs:
+                    st.error("Escribí al menos un ítem (uno por línea).")
                 elif gsel == "(nuevo grupo)" and not _norm(gnuevo):
                     st.error("Indicá el nombre del grupo nuevo.")
                 else:
                     try:
                         idgrupo = (datos.agregar_grupo_checklist(_norm(gnuevo))
                                    if gsel == "(nuevo grupo)" else gmap[gsel])
-                        datos.agregar_item_checklist(idequipo, idgrupo, _norm(item))
+                        n = datos.agregar_items_checklist(idequipo, idgrupo, descs)
                         st.cache_data.clear()
-                        st.success("Ítem agregado.")
+                        st.success(f"{n} ítem(s) agregado(s).")
                         st.rerun()
                     except Exception as exc:  # noqa: BLE001
                         st.error(f"No se pudo agregar: {exc}")
@@ -2340,6 +2344,7 @@ def render_datos() -> None:
         sub.append(("Equipos por empresa", render_equipos_inv))
     if _puede_admin_usuarios():
         sub.append(("Tipos de equipo", render_tipos_equipo))
+        sub.append(("Checklist", render_checklist))
         sub.append(("Usuarios", render_usuarios))
         sub.append(("Empresas", render_empresas))
         sub.append(("KPI y Objetivos", render_kpi))
