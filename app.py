@@ -1517,6 +1517,15 @@ def _validar_login(nombre: str, clave: str):
     return None
 
 
+@st.cache_data
+def _img_data_uri(path: str) -> str:
+    """Devuelve la imagen como data URI (para incrustar en HTML)."""
+    ext = Path(path).suffix.lower()
+    mime = "image/png" if ext == ".png" else "image/jpeg"
+    with open(path, "rb") as f:
+        return f"data:{mime};base64," + base64.b64encode(f.read()).decode()
+
+
 def _pie_corporativo() -> None:
     """Pie de página corporativo (banda navy + certificaciones). Se usa en todas las vistas."""
     st.markdown("<div style='margin-top:10px'></div>", unsafe_allow_html=True)
@@ -1547,14 +1556,19 @@ def _login_gate() -> None:
     except Exception as exc:  # noqa: BLE001
         st.error(f"No se pudo conectar a la base: {exc}")
         st.stop()
-    _cap = (f"text-align:center;color:{cfg.COLOR_NAVY};font-weight:700;"
-            f"font-family:Lato,sans-serif;font-size:.95rem;margin-bottom:8px")
+    _cap = (f"text-align:center;color:{cfg.COLOR_NAVY};font-weight:800;"
+            f"font-family:Lato,sans-serif;font-size:1.15rem;margin-bottom:10px")
     _izq, _centro, _der = st.columns([1.3, 1.6, 1.3])
     # Izquierda: trinorma ISO (lista de imágenes, sin columnas anidadas)
     with _izq:
         st.markdown(f"<p style='{_cap}'>Empresa certificada en Trinorma</p>",
                     unsafe_allow_html=True)
-        st.image(cfg.LOGOS_CERTIFICACION[0:3], width=72)  # ISO 9001 / 14001 / 45001
+        _isos = "".join(
+            f"<img src='{_img_data_uri(p)}' style='height:90px'>"
+            for p in cfg.LOGOS_CERTIFICACION[0:3])
+        st.markdown(
+            f"<div style='display:flex;justify-content:space-around;align-items:center;"
+            f"gap:6px'>{_isos}</div>", unsafe_allow_html=True)
     # Centro: formulario de ingreso
     with _centro:
         st.markdown(
@@ -1577,7 +1591,10 @@ def _login_gate() -> None:
     with _der:
         st.markdown(f"<p style='{_cap}'>Empresa acreditada en OAA</p>",
                     unsafe_allow_html=True)
-        st.image(cfg.LOGOS_CERTIFICACION[3], width=150)  # OAA
+        st.markdown(
+            f"<div style='display:flex;justify-content:center;align-items:center'>"
+            f"<img src='{_img_data_uri(cfg.LOGOS_CERTIFICACION[3])}' "
+            f"style='height:90px'></div>", unsafe_allow_html=True)
     st.stop()
 
 
