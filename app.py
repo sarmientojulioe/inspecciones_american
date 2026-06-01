@@ -1597,6 +1597,7 @@ def _login_gate() -> None:
             f"<div style='display:flex;justify-content:center;align-items:center'>"
             f"<img src='{_img_data_uri(cfg.LOGOS_CERTIFICACION[3])}' "
             f"style='height:90px'></div>", unsafe_allow_html=True)
+    _pie_corporativo()
     st.stop()
 
 
