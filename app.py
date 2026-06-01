@@ -5,6 +5,7 @@ Publicar en red:  streamlit run app.py --server.address 0.0.0.0 --server.port 85
 """
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import zipfile
 from collections import Counter
@@ -14,6 +15,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 
 import db
 from reportes import certificados, correo, datos, plantillas_config as cfg
@@ -104,6 +106,32 @@ def _init_esquema():
         except Exception:  # noqa: BLE001
             pass  # no bloquear la app si no se pudo (p. ej. permisos)
     return True
+
+
+# --------------------------------------------------------------------------- #
+# Vista previa de PDF (modal) + descarga
+# --------------------------------------------------------------------------- #
+@st.dialog("Vista previa del PDF", width="large")
+def _dialogo_pdf(data: bytes, file_name: str, label: str) -> None:
+    b64 = base64.b64encode(data).decode()
+    components.html(
+        f'<iframe src="data:application/pdf;base64,{b64}" '
+        f'width="100%" height="640" style="border:none"></iframe>', height=660)
+    st.download_button(f"⬇ Descargar — {label}", data=data, file_name=file_name,
+                       mime="application/pdf", use_container_width=True,
+                       key=f"dlmodal_{file_name}")
+
+
+def boton_pdf(label: str, data_fn, file_name: str, key: str,
+              use_container_width: bool = True, disabled: bool = False) -> None:
+    """Botón 'Vista previa' que abre el PDF en una ventana con opción de descargar.
+    data_fn: callable que genera los bytes (se ejecuta solo al previsualizar)."""
+    if st.button(f"👁 {label}", key=f"prev_{key}",
+                 use_container_width=use_container_width, disabled=disabled):
+        try:
+            _dialogo_pdf(data_fn(), file_name, label)
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"No se pudo generar el PDF: {exc}")
 
 
 # --------------------------------------------------------------------------- #
@@ -349,11 +377,9 @@ def botones_exportar(display: pd.DataFrame, nombre: str, titulo: str,
             key=f"xlsx_{key}", use_container_width=True,
         )
     with c2:
-        st.download_button(
-            "Descargar PDF", data=df_to_pdf(display[cols_pdf], titulo),
-            file_name=f"{nombre}.pdf", mime="application/pdf",
-            key=f"pdf_{key}", use_container_width=True,
-        )
+        boton_pdf("Ver / descargar PDF",
+                  lambda d=display, c=cols_pdf, t=titulo: df_to_pdf(d[c], t),
+                  f"{nombre}.pdf", f"pdf_{key}")
 
 
 # --------------------------------------------------------------------------- #
@@ -504,10 +530,8 @@ def _bloque_fotos(idd: int, num: int) -> None:
                     st.error(f"No se pudo guardar: {exc}")
 
     if n_guard:
-        st.download_button(
-            "Informe Preliminar (FOTO) (PDF)", data=pdf_preliminar_foto(idd),
-            file_name=f"informe_preliminar_foto_{num}_{idd}.pdf", mime="application/pdf",
-            key=f"prelimfoto_{idd}", use_container_width=True)
+        boton_pdf("Informe Preliminar (FOTO) (PDF)", lambda i=idd: pdf_preliminar_foto(i),
+                  f"informe_preliminar_foto_{num}_{idd}.pdf", f"prelimfoto_{idd}")
 
 
 def render_detalle(min_f: dt.date, max_f: dt.date) -> None:
@@ -612,16 +636,13 @@ def render_detalle(min_f: dt.date, max_f: dt.date) -> None:
         with st.expander(f"{titulo}  —  Resultado: {fmt(fila.get('resultado'))}"):
             p1, p2 = st.columns(2)
             with p1:
-                st.download_button(
-                    "Informe Preliminar (PDF)", data=pdf_preliminar(idd),
-                    file_name=f"informe_preliminar_{num}_{idd}.pdf", mime="application/pdf",
-                    key=f"prelim_{idd}", use_container_width=True)
+                boton_pdf("Informe Preliminar (PDF)", lambda i=idd: pdf_preliminar(i),
+                          f"informe_preliminar_{num}_{idd}.pdf", f"prelim_{idd}")
             with p2:
                 if _es_favorable(fila.get("resultado")):
-                    st.download_button(
-                        "Certificación Periódica (PDF)", data=pdf_certificado(idd),
-                        file_name=f"certificacion_{num}_{idd}.pdf", mime="application/pdf",
-                        key=f"cert_{idd}", use_container_width=True)
+                    boton_pdf("Certificación Periódica (PDF)",
+                              lambda i=idd: pdf_certificado(i),
+                              f"certificacion_{num}_{idd}.pdf", f"cert_{idd}")
                 else:
                     st.button("Certificación (solo si Favorable)", disabled=True,
                               key=f"certoff_{idd}", use_container_width=True)
@@ -660,11 +681,12 @@ def render_cargar() -> None:
         st.markdown("**Informe Preliminar de cada equipo** (con los datos cargados; "
                     "los campos faltantes quedan en blanco para completar después):")
         for det in ultima["detalles"]:
-            st.download_button(
+            _iddet = int(det["iddet"])
+            boton_pdf(
                 f"Informe Preliminar — {det.get('equipo') or 'equipo'} (Nº {ultima['num']})",
-                data=pdf_preliminar(int(det["iddet"])),
-                file_name=f"informe_preliminar_{ultima['num']}_{det['iddet']}.pdf",
-                mime="application/pdf", key=f"ip_new_{det['iddet']}")
+                lambda i=_iddet: pdf_preliminar(i),
+                f"informe_preliminar_{ultima['num']}_{det['iddet']}.pdf",
+                f"ip_new_{det['iddet']}")
         if st.button("Cargar otra inspección"):
             del st.session_state["ultima_creada"]
             st.rerun()
@@ -991,16 +1013,12 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
     idd_sel, estado_sel = emit_map[sel]
     ce1, ce2 = st.columns(2)
     with ce1:
-        st.download_button(
-            "Informe Preliminar (PDF)", data=pdf_preliminar(idd_sel),
-            file_name=f"informe_preliminar_{idd_sel}.pdf", mime="application/pdf",
-            key=f"emit_prelim_{idd_sel}", use_container_width=True)
+        boton_pdf("Informe Preliminar (PDF)", lambda i=idd_sel: pdf_preliminar(i),
+                  f"informe_preliminar_{idd_sel}.pdf", f"emit_prelim_{idd_sel}")
     with ce2:
         if _es_favorable(estado_sel):
-            st.download_button(
-                "Certificación Periódica (PDF)", data=pdf_certificado(idd_sel),
-                file_name=f"certificacion_{idd_sel}.pdf", mime="application/pdf",
-                key=f"emit_cert_{idd_sel}", use_container_width=True)
+            boton_pdf("Certificación Periódica (PDF)", lambda i=idd_sel: pdf_certificado(i),
+                      f"certificacion_{idd_sel}.pdf", f"emit_cert_{idd_sel}")
         else:
             st.button("Certificación (solo si Favorable)", disabled=True,
                       key=f"emit_certoff_{idd_sel}", use_container_width=True)
@@ -1187,16 +1205,12 @@ def _ficha_inspeccion(row) -> None:
     st.markdown("**Documentos**")
     d1, d2 = st.columns(2)
     with d1:
-        st.download_button(
-            "Informe Preliminar (PDF)", data=pdf_preliminar(idd),
-            file_name=f"informe_preliminar_{num}_{idd}.pdf", mime="application/pdf",
-            key=f"ficha_prelim_{idd}", use_container_width=True)
+        boton_pdf("Informe Preliminar (PDF)", lambda i=idd: pdf_preliminar(i),
+                  f"informe_preliminar_{num}_{idd}.pdf", f"ficha_prelim_{idd}")
     with d2:
         if _es_favorable(cur_estado):
-            st.download_button(
-                "Certificación Periódica (PDF)", data=pdf_certificado(idd),
-                file_name=f"certificacion_{num}_{idd}.pdf", mime="application/pdf",
-                key=f"ficha_cert_{idd}", use_container_width=True)
+            boton_pdf("Certificación Periódica (PDF)", lambda i=idd: pdf_certificado(i),
+                      f"certificacion_{num}_{idd}.pdf", f"ficha_cert_{idd}")
     _bloque_fotos(idd, num)
 
 
@@ -1296,10 +1310,8 @@ def render_informes() -> None:
         st.plotly_chart(px.bar(resumen, x="estado", y="cantidad", title=titulo),
                         use_container_width=True)
         pdf = certificados.informe_listado_pdf(disp, titulo)
-        st.download_button(
-            "Descargar PDF", data=pdf,
-            file_name=titulo.replace(" ", "_").replace("/", "-") + ".pdf",
-            mime="application/pdf", key="rep_pdf")
+        boton_pdf("Ver / descargar PDF", lambda d=pdf: d,
+                  titulo.replace(" ", "_").replace("/", "-") + ".pdf", "rep_pdf_res")
         _bloque_email(tipo, idc, email, titulo, disp, pdf, dias)
         return
 
@@ -1310,10 +1322,8 @@ def render_informes() -> None:
     st.caption(f"{len(disp)} equipos")
     st.dataframe(disp, use_container_width=True, hide_index=True)
     pdf = certificados.informe_listado_pdf(disp, titulo)
-    st.download_button(
-        "Descargar PDF", data=pdf,
-        file_name=titulo.replace(" ", "_").replace("/", "-") + ".pdf",
-        mime="application/pdf", key="rep_pdf")
+    boton_pdf("Ver / descargar PDF", lambda d=pdf: d,
+              titulo.replace(" ", "_").replace("/", "-") + ".pdf", "rep_pdf_gen")
     _bloque_email(tipo, idc, email, titulo, disp, pdf, dias)
     if tipo == "Próximos a vencer":
         _envio_masivo(dias)
@@ -1425,15 +1435,12 @@ def render_formularios() -> None:
     idequipo = int(eq_map[eq_lbl])
     c1, c2 = st.columns(2)
     with c1:
-        st.download_button(
-            "Informe Preliminar (en blanco)", data=pdf_prelim_blanco(idequipo),
-            file_name=f"informe_preliminar_blanco_{idequipo}.pdf", mime="application/pdf",
-            key="dl_blanco", use_container_width=True)
+        boton_pdf("Informe Preliminar (en blanco)",
+                  lambda i=idequipo: pdf_prelim_blanco(i),
+                  f"informe_preliminar_blanco_{idequipo}.pdf", "dl_blanco")
     with c2:
-        st.download_button(
-            "Checklist / Hoja de campo", data=pdf_checklist(idequipo),
-            file_name=f"checklist_{idequipo}.pdf", mime="application/pdf",
-            key="dl_check", use_container_width=True)
+        boton_pdf("Checklist / Hoja de campo", lambda i=idequipo: pdf_checklist(i),
+                  f"checklist_{idequipo}.pdf", "dl_check")
 
 
 # --------------------------------------------------------------------------- #
@@ -1492,32 +1499,46 @@ def _login_gate() -> None:
 # --------------------------------------------------------------------------- #
 # Layout principal
 # --------------------------------------------------------------------------- #
-st.sidebar.title("Inspecciones de equipos")
-st.sidebar.caption(db.descripcion())
+# --- Isologo del área arriba del todo (todas las páginas) ---
+st.sidebar.image(cfg.LOGO_AREA_INSP, use_container_width=True)
+
+# --- Usuario (nombre + tipo) arriba; cerrar sesión debajo ---
 if st.session_state.get("auth"):
-    st.sidebar.caption(f"Sesión: {st.session_state['auth']['nombre']} · {_rol_actual()}")
-    if st.sidebar.button("Cerrar sesión"):
+    _su1, _su2 = st.sidebar.columns([1, 1])
+    _su1.markdown(f"**{st.session_state['auth']['nombre']}**")
+    _su2.markdown(
+        f"<span style='color:{cfg.COLOR_AZUL};font-weight:700'>{_rol_actual()}</span>",
+        unsafe_allow_html=True)
+    if st.sidebar.button("Cerrar sesión", use_container_width=True):
         del st.session_state["auth"]
         st.rerun()
-if st.sidebar.button("Probar conexión"):
-    try:
-        base, motor = db.server_info()
-        st.sidebar.success(f"OK: {base} ({motor})")
-    except Exception as exc:  # noqa: BLE001
-        st.sidebar.error(f"Sin conexión: {exc}")
 
+# --- Isologos de certificación (trinorma ISO) arriba, en todas las páginas ---
 st.sidebar.divider()
-st.sidebar.caption("Empresa certificada")
-_cba, _cbb = st.sidebar.columns(2)
-_cba.image(cfg.LOGOS_CERTIFICACION[0], use_container_width=True)
-_cbb.image(cfg.LOGOS_CERTIFICACION[1], use_container_width=True)
-_cbc, _cbd = st.sidebar.columns(2)
-_cbc.image(cfg.LOGOS_CERTIFICACION[2], use_container_width=True)
-_cbd.image(cfg.LOGOS_CERTIFICACION[3], use_container_width=True)
+_iso = st.sidebar.columns(3)
+_iso[0].image(cfg.LOGOS_CERTIFICACION[0], use_container_width=True)  # ISO 9001
+_iso[1].image(cfg.LOGOS_CERTIFICACION[1], use_container_width=True)  # ISO 14001
+_iso[2].image(cfg.LOGOS_CERTIFICACION[2], use_container_width=True)  # ISO 45001
 
-_hcol1, _hcol2, _hcol3 = st.columns([1.1, 3.4, 2.2])
+# --- Settings (info de conexión + probar conexión) ---
+with st.sidebar.expander("⚙️ Settings"):
+    st.caption(db.descripcion())
+    if st.button("Probar conexión", use_container_width=True):
+        try:
+            base, motor = db.server_info()
+            st.success(f"OK: {base} ({motor})")
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Sin conexión: {exc}")
+
+# --- OAA abajo ---
+st.sidebar.divider()
+_oa1, _oa2, _oa3 = st.sidebar.columns([1, 2, 1])
+_oa2.image(cfg.LOGOS_CERTIFICACION[3], use_container_width=True)  # OAA
+
+# --- Encabezado de la página (todas las páginas) ---
+_hcol1, _hcol2 = st.columns([1, 4])
 with _hcol1:
-    st.image(cfg.LOGO_AMERICAN, width=230)
+    st.image(cfg.LOGO_AMERICAN, width=200)
 with _hcol2:
     st.markdown(
         f"<h1 style='margin-bottom:0;font-family:Lato,sans-serif;font-weight:900;"
@@ -1525,8 +1546,6 @@ with _hcol2:
         f"<p style='color:{cfg.COLOR_GRIS};font-size:1.3rem;margin-top:0;"
         f"font-family:Lato,sans-serif'>Sistema de inspecciones de equipos</p>",
         unsafe_allow_html=True)
-with _hcol3:
-    st.image(cfg.LOGO_AREA_INSP, use_container_width=True)
 
 # El esquema (columna rol, tablas de fotos) debe existir ANTES del login,
 # porque _validar_login consulta licusuario.rol.
