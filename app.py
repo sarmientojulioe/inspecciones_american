@@ -1606,7 +1606,8 @@ st.markdown(
     "padding:6px 16px;border-radius:6px;display:flex;justify-content:space-between;"
     "flex-wrap:wrap;gap:6px;font-size:.72rem;letter-spacing:.04em;"
     "text-transform:uppercase'>"
-    f"<span>{cfg.EMPRESA_NOMBRE} · {cfg.EMPRESA_TAGLINE}</span>"
+    f"<span>{cfg.EMPRESA_NOMBRE} · Inspecciones y Certificaciones, Capacitación "
+    "y Medicina Integral Laboral</span>"
     "<span>Trinorma ISO 9001 · 14001 · 45001 — Acreditada OAA</span></div>"
     "<div style='height:4px;background:linear-gradient(90deg,#50a5d9,#2884c7,#22355b);"
     "border-radius:3px;margin:4px 0 12px 0'></div>", unsafe_allow_html=True)
