@@ -1052,11 +1052,14 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
                 st.error(f"No se pudo guardar: {exc}")
 
     st.divider()
-    st.markdown("**Emitir documentos**  ·  guardá los cambios antes de emitir "
-                "para que el PDF refleje los últimos datos.")
-    emit_map = {f"Nº {int(r['Nº'])} — {r['Equipo']} — {r['Estado'] or 's/estado'}":
-                (int(r["idd"]), r["Estado"]) for _, r in ed.iterrows()}
-    sel = st.selectbox("Equipo a emitir", list(emit_map), key="emit_sel")
+    st.markdown("**Abrir / emitir informe**  ·  elegí por **Nº** u **oblea**; abajo se abre "
+                "la vista previa del PDF. Guardá los cambios antes de emitir para que el "
+                "PDF refleje los últimos datos.")
+    emit_map = {
+        f"Nº {int(r['Nº'])} · Oblea {r['Oblea'] or 's/oblea'} · {r['Equipo']} · "
+        f"{r['Estado'] or 's/estado'}": (int(r["idd"]), r["Estado"])
+        for _, r in ed.iterrows()}
+    sel = st.selectbox("Inspección (buscá por Nº u oblea)", list(emit_map), key="emit_sel")
     idd_sel, estado_sel = emit_map[sel]
     ce1, ce2 = st.columns(2)
     with ce1:
@@ -1178,20 +1181,29 @@ def _ficha_inspeccion(row) -> None:
     idd = int(row["idd"])
     num = int(row["num"]) if pd.notna(row["num"]) else idd
     fecha_txt = row["fecha"].strftime("%d/%m/%Y") if pd.notna(row["fecha"]) else ""
+    def g(k):  # getter seguro: "" si el valor es NA/None (evita "boolean value of NA")
+        v = row[k] if k in row.index else None
+        try:
+            if pd.isna(v):
+                return ""
+        except (TypeError, ValueError):
+            pass
+        return str(v).strip()
+
     st.markdown(f"### Ficha — Inspección Nº {num}")
     i1, i2, i3 = st.columns(3)
     i1.write(f"**Fecha:** {fecha_txt}")
-    i2.write(f"**Empresa:** {row['empresa'] or ''}")
-    i3.write(f"**Equipo:** {row['equipo'] or ''}")
+    i2.write(f"**Empresa:** {g('empresa')}")
+    i3.write(f"**Equipo:** {g('equipo')}")
 
-    cur_estado = row["estado"] or ""
+    cur_estado = g("estado")
     if not _puede_escribir():
         ro = {
-            "Estado": cur_estado, "Inspector": row["inspector"] or "",
-            "Oblea": row["oblea"] or "", "Marca": row["marca"] or "",
-            "N° Serie": row["serie"] or "", "Matrícula": row["matricula"] or "",
+            "Estado": cur_estado, "Inspector": g("inspector"),
+            "Oblea": g("oblea"), "Marca": g("marca"),
+            "N° Serie": g("serie"), "Matrícula": g("matricula"),
             "Vto. inspección": row["vto"].strftime("%d/%m/%Y") if pd.notna(row["vto"]) else "",
-            "Observaciones": row["obs"] or "",
+            "Observaciones": g("obs"),
         }
         st.dataframe(pd.DataFrame({"Campo": list(ro), "Valor": list(ro.values())}),
                      hide_index=True, use_container_width=True)
@@ -1204,7 +1216,7 @@ def _ficha_inspeccion(row) -> None:
         usuarios = cat_usuarios()
         name2id = {r.nombre: r.id for r in usuarios.itertuples()}
         insp_opts = [""] + list(usuarios["nombre"])
-        cur_insp = row["inspector"] or ""
+        cur_insp = g("inspector")
 
         with st.form(f"ficha_{idd}"):
             c1, c2 = st.columns(2)
@@ -1213,14 +1225,14 @@ def _ficha_inspeccion(row) -> None:
             inspector = c2.selectbox("Inspector", insp_opts,
                                      index=insp_opts.index(cur_insp) if cur_insp in insp_opts else 0)
             c3, c4 = st.columns(2)
-            oblea = c3.text_input("Oblea", value=row["oblea"] or "")
-            marca = c4.text_input("Marca", value=row["marca"] or "")
+            oblea = c3.text_input("Oblea", value=g("oblea"))
+            marca = c4.text_input("Marca", value=g("marca"))
             c5, c6 = st.columns(2)
-            serie = c5.text_input("N° Serie", value=row["serie"] or "")
-            matricula = c6.text_input("Matrícula", value=row["matricula"] or "")
+            serie = c5.text_input("N° Serie", value=g("serie"))
+            matricula = c6.text_input("Matrícula", value=g("matricula"))
             vto_default = row["vto"].date() if pd.notna(row["vto"]) else None
             vto = st.date_input("Vto. inspección", value=vto_default, format="DD/MM/YYYY")
-            obs = st.text_area("Observaciones", value=row["obs"] or "")
+            obs = st.text_area("Observaciones", value=g("obs"))
             confirmar = st.checkbox("Confirmo guardar los cambios en la base de producción")
             guardar = st.form_submit_button("Guardar cambios", type="primary")
 
