@@ -33,10 +33,10 @@ st.markdown(f"<style>{_LATO_CSS}</style>", unsafe_allow_html=True)
 _BRAND_CSS = f"""
 /* Fondo general con un leve tinte azulado (en vez de blanco puro) */
 .stApp {{ background-color: #EEF3F9; }}
-/* Quitar el espacio superior por defecto de Streamlit (pega el contenido arriba) */
+/* Quitar el espacio superior por defecto de Streamlit (la barra navy queda arriba) */
 [data-testid="stHeader"] {{ background: transparent; height: 0; min-height: 0; }}
 [data-testid="stAppViewContainer"] > .main .block-container,
-.block-container {{ padding-top: 1rem !important; }}
+.block-container {{ padding-top: 0.3rem !important; }}
 h1, h2, h3 {{ color: {cfg.COLOR_NAVY}; font-family: Lato, sans-serif; }}
 
 /* Pestañas: barra con fondo, activa en navy con texto blanco */
@@ -1519,24 +1519,24 @@ def _validar_login(nombre: str, clave: str):
 
 def _pie_corporativo() -> None:
     """Pie de página corporativo (banda navy + certificaciones). Se usa en todas las vistas."""
-    st.markdown("<div style='margin-top:24px'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-top:10px'></div>", unsafe_allow_html=True)
     st.markdown(
-        f"<div style='background:#182640;border-radius:10px;padding:16px 20px;"
+        f"<div style='background:#182640;border-radius:10px;padding:12px 20px;"
         f"font-family:Lato,sans-serif'>"
         f"<p style='color:#FFFFFF;font-weight:900;font-size:1.05rem;margin:0'>"
         f"{cfg.EMPRESA_NOMBRE}</p>"
-        f"<p style='color:#9fd0ec;margin:0 0 6px 0'>{cfg.EMPRESA_TAGLINE}</p>"
+        f"<p style='color:#9fd0ec;margin:0 0 4px 0'>{cfg.EMPRESA_TAGLINE}</p>"
         f"<p style='color:#cbd5e1;font-size:.9rem;margin:0'>"
         f"{cfg.EMPRESA_DIRECCION} · Tel: {cfg.EMPRESA_TEL} · {cfg.EMPRESA_EMAIL} · "
         f"{cfg.EMPRESA_WEB}</p>"
-        f"<p style='color:#cbd5e1;font-size:.85rem;margin:6px 0 0 0'>"
+        f"<p style='color:#cbd5e1;font-size:.85rem;margin:4px 0 0 0'>"
         f"Certificada en ISO 9001, ISO 14001 e ISO 45001 · Acreditada por el OAA</p>"
         f"</div>", unsafe_allow_html=True)
-    _fc = st.columns([1, 1, 1, 1, 6])
-    _fc[0].image(cfg.LOGOS_CERTIFICACION[0], width=74)   # ISO 9001
-    _fc[1].image(cfg.LOGOS_CERTIFICACION[1], width=74)   # ISO 14001
-    _fc[2].image(cfg.LOGOS_CERTIFICACION[2], width=74)   # ISO 45001
-    _fc[3].image(cfg.LOGOS_CERTIFICACION[3], width=104)  # OAA
+    _fc = st.columns([1, 1, 1, 1, 4])
+    _fc[0].image(cfg.LOGOS_CERTIFICACION[0], width=66)   # ISO 9001
+    _fc[1].image(cfg.LOGOS_CERTIFICACION[1], width=66)   # ISO 14001
+    _fc[2].image(cfg.LOGOS_CERTIFICACION[2], width=66)   # ISO 45001
+    _fc[3].image(cfg.LOGOS_CERTIFICACION[3], width=92)   # OAA
 
 
 def _login_gate() -> None:
