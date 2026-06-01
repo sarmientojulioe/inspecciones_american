@@ -3,6 +3,7 @@ pandas>=2.2
 openpyxl>=3.1
 reportlab>=4.2
 qrcode[pil]>=7.4
+pymupdf>=1.24
 plotly>=5.24
 python-dotenv>=1.0
 pymysql>=1.1
