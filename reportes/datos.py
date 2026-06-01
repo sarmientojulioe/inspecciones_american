@@ -614,6 +614,114 @@ def eliminar_equipo_empresa(id_eq) -> int:
             raise
 
 
+# --------------------------------------------------------------------------- #
+# KPI y Objetivos: metas por KPI/año/mes (mes=0 => objetivo anual) + valores reales
+# --------------------------------------------------------------------------- #
+_DDL_KPI_OBJETIVO = (
+    "CREATE TABLE IF NOT EXISTS kpi_objetivo ("
+    " id INT AUTO_INCREMENT PRIMARY KEY,"
+    " kpi VARCHAR(40) NOT NULL,"
+    " anio INT NOT NULL,"
+    " mes INT NOT NULL DEFAULT 0,"   # 0 = objetivo anual; 1-12 = mensual
+    " objetivo DECIMAL(14,2) NOT NULL,"
+    " fechaalta DATETIME NULL,"
+    " UNIQUE KEY uq_kpi (kpi, anio, mes)"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+
+def asegurar_esquema_kpi() -> None:
+    """Crea la tabla de objetivos de KPI si no existe. Solo en MySQL."""
+    if db.ENGINE != "mysql":
+        return
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(_DDL_KPI_OBJETIVO)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def kpi_objetivos(anio) -> pd.DataFrame:
+    """Objetivos cargados para un año: columnas kpi, mes (0=anual), objetivo."""
+    cols = ["kpi", "mes", "objetivo"]
+    if db.ENGINE != "mysql":
+        return pd.DataFrame(columns=cols)
+    df = db.run_query(
+        "SELECT kpi, mes, objetivo FROM kpi_objetivo WHERE anio = ?", [int(anio)])
+    if not df.empty:
+        df["mes"] = df["mes"].astype(int)
+        df["objetivo"] = df["objetivo"].astype(float)
+    return df
+
+
+def guardar_kpi_objetivo(kpi: str, anio, mes, objetivo) -> None:
+    """Inserta o actualiza el objetivo de un KPI (upsert). Solo en MySQL."""
+    if db.ENGINE != "mysql":
+        return
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO kpi_objetivo (kpi, anio, mes, objetivo, fechaalta) "
+                "VALUES (%s,%s,%s,%s,%s) "
+                "ON DUPLICATE KEY UPDATE objetivo=VALUES(objetivo)",
+                [str(kpi), int(anio), int(mes), float(objetivo), dt.datetime.now()])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def kpi_actuales(anio, mes=None) -> dict:
+    """Valores reales de los KPIs para un período (servicio = inspección de equipos).
+
+    mes None/0 => todo el año; 1-12 => ese mes. Devuelve:
+    inspecciones, equipos, pct_favorables, vencimientos.
+    """
+    cond = " AND YEAR(s.FECHA) = ?"
+    extra: list = [int(anio)]
+    if mes:
+        cond += " AND MONTH(s.FECHA) = ?"
+        extra.append(int(mes))
+    # Una sola pasada para inspecciones / equipos / favorables
+    sql = (
+        "SELECT COUNT(DISTINCT s.IDSOLICITUD) AS inspecciones, "
+        "COUNT(d.IDSOLICITUDDETALLE) AS equipos, "
+        "SUM(CASE WHEN LOWER(tr.DESCRIPCION) LIKE ? THEN 1 ELSE 0 END) AS favorables, "
+        "COUNT(ip.IDRESULTADO) AS con_resultado "
+        "FROM solicitud_servicio s "
+        "JOIN solicitud_servicio_det d ON d.IDSOLICITUD = s.IDSOLICITUD "
+        "LEFT JOIN informe_preliminar ip ON ip.IDSOLICITUDDETALLE = d.IDSOLICITUDDETALLE "
+        "LEFT JOIN tiposresultado tr ON tr.IDRESULTADO = ip.IDRESULTADO "
+        "WHERE s.IDSERVICIO = 1 AND s.ACTIVO = 1" + cond)
+    r = db.run_query(sql, ["favorable%"] + extra)
+    fila = r.iloc[0] if not r.empty else None
+    insp = int(fila["inspecciones"] or 0) if fila is not None else 0
+    equ = int(fila["equipos"] or 0) if fila is not None else 0
+    fav = int(fila["favorables"] or 0) if fila is not None else 0
+    con = int(fila["con_resultado"] or 0) if fila is not None else 0
+    pct = round(fav / con * 100, 1) if con else 0.0
+
+    # Vencimientos del período (por VTO_INSPECCION)
+    condv = " AND YEAR(ip.VTO_INSPECCION) = ?"
+    extrav: list = [int(anio)]
+    if mes:
+        condv += " AND MONTH(ip.VTO_INSPECCION) = ?"
+        extrav.append(int(mes))
+    rv = db.run_query(
+        "SELECT COUNT(*) AS vencimientos FROM informe_preliminar ip "
+        "JOIN solicitud_servicio_det d ON d.IDSOLICITUDDETALLE = ip.IDSOLICITUDDETALLE "
+        "JOIN solicitud_servicio s ON s.IDSOLICITUD = d.IDSOLICITUD "
+        "WHERE s.IDSERVICIO = 1 AND s.ACTIVO = 1 AND ip.VTO_INSPECCION IS NOT NULL"
+        + condv, extrav)
+    ven = int(rv.iloc[0]["vencimientos"] or 0) if not rv.empty else 0
+
+    return {"inspecciones": insp, "equipos": equ,
+            "pct_favorables": pct, "vencimientos": ven}
+
+
 _SQL_REPORTE = (
     "SELECT CAST(s.NUM AS BIGINT) AS num, s.FECHA AS fecha, c.RAZON_SOCIAL AS empresa, "
     "e.DESCRIPCION AS equipo, ip.MARCA_EQUIPO AS marca, ip.SERIE_EQUIPO AS serie, "

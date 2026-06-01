@@ -86,6 +86,17 @@ COLUMNAS = {
 COLS_PDF = ["num", "fecha", "vencimiento", "cliente", "equipo", "marca", "provincia"]
 SERVICIOS = {"Inspección de Equipos": 1, "Certificación de Personas": 2, "Todos": None}
 
+MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio",
+         "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+
+# KPIs con objetivo: (clave, etiqueta, tipo) — tipo 'porcentaje' o 'cantidad'
+KPIS = [
+    ("inspecciones", "Inspecciones realizadas", "cantidad"),
+    ("equipos", "Equipos inspeccionados", "cantidad"),
+    ("pct_favorables", "% de resultados favorables", "porcentaje"),
+    ("vencimientos", "Renovaciones / vencimientos", "cantidad"),
+]
+
 # Etiquetas de los campos del detalle por equipo
 EQ_LABELS = {
     "equipo": "Equipo", "norma_equipo": "Norma (equipo)", "marca": "Marca",
@@ -138,7 +149,7 @@ def _puede_admin_usuarios() -> bool:
 def _init_esquema():
     """Crea tablas de fotos/leyendas y la columna rol si faltan (una vez por proceso)."""
     for fn in (datos.asegurar_esquema_fotos, datos.asegurar_esquema_roles,
-               datos.asegurar_esquema_empresas):
+               datos.asegurar_esquema_empresas, datos.asegurar_esquema_kpi):
         try:
             fn()
         except Exception:  # noqa: BLE001
@@ -472,6 +483,74 @@ def botones_exportar(display: pd.DataFrame, nombre: str, titulo: str,
                   f"{nombre}.pdf", f"pdf_{key}")
 
 
+def _exportar_metrica(dfm: pd.DataFrame, nombre: str, titulo: str, key: str) -> None:
+    """Botones Excel/PDF con los datos de una métrica/gráfico del dashboard."""
+    if dfm is None or dfm.empty:
+        return
+    botones_exportar(dfm, nombre, titulo, list(dfm.columns), key)
+
+
+@st.cache_data(ttl=120)
+def kpi_obj(anio: int) -> pd.DataFrame:
+    return datos.kpi_objetivos(anio)
+
+
+@st.cache_data(ttl=120)
+def kpi_real(anio: int, mes: int) -> dict:
+    return datos.kpi_actuales(anio, mes or None)
+
+
+def _seccion_cumplimiento() -> None:
+    """Cumplimiento de objetivos de KPI (real vs objetivo) en el dashboard."""
+    st.subheader("Cumplimiento de objetivos")
+    if not _es_mysql():
+        st.caption("Definí objetivos en **Datos → KPI y Objetivos** "
+                   "(disponible en producción).")
+        return
+    hoy = dt.date.today()
+    c1, c2, c3 = st.columns([1, 1.4, 2])
+    anio = int(c1.number_input("Año", min_value=2000, max_value=2100,
+                               value=hoy.year, step=1, key="cmp_anio"))
+    periodo = c2.radio("Período", ["Anual", "Mensual"], horizontal=True, key="cmp_per")
+    mes = 0
+    if periodo == "Mensual":
+        mes = int(c3.selectbox("Mes", list(range(1, 13)), index=hoy.month - 1,
+                               format_func=lambda m: MESES[m - 1], key="cmp_mes"))
+    obj = kpi_obj(anio)
+    obj_map = {(r.kpi, int(r.mes)): float(r.objetivo) for r in obj.itertuples()}
+    if not any((k, mes) in obj_map for k, _, _ in KPIS):
+        st.info("No hay objetivos cargados para ese período. "
+                "Cargalos en **Datos → KPI y Objetivos**.")
+        return
+    reales = kpi_real(anio, mes)
+    filas = []
+    for key, label, tipo in KPIS:
+        objval = obj_map.get((key, mes))
+        real = reales.get(key, 0)
+        cumpl = None if not objval else round(real / objval * 100)
+        if cumpl is None:
+            icono = "—"
+        elif cumpl >= 100:
+            icono = "✅"
+        elif cumpl >= 80:
+            icono = "⚠️"
+        else:
+            icono = "❌"
+        suf = "%" if tipo == "porcentaje" else ""
+        filas.append({
+            "Métrica": label,
+            "Objetivo": f"{objval:g}{suf}" if objval is not None else "—",
+            "Real": f"{real:g}{suf}",
+            "Cumplimiento": f"{cumpl:g}%" if cumpl is not None else "—",
+            "Estado": icono,
+        })
+    tabla = pd.DataFrame(filas)
+    st.dataframe(tabla, hide_index=True, use_container_width=True)
+    periodo_txt = f"{MESES[mes - 1]} {anio}" if mes else f"Año {anio}"
+    _exportar_metrica(tabla, f"cumplimiento_{anio}_{mes}",
+                      f"Cumplimiento de objetivos — {periodo_txt}", f"cmp_{anio}_{mes}")
+
+
 # --------------------------------------------------------------------------- #
 # Pestaña: listado de inspecciones (resumen)
 # --------------------------------------------------------------------------- #
@@ -511,6 +590,9 @@ def render_inspecciones(min_f: dt.date, max_f: dt.date) -> None:
     k3.metric("Clientes", int(f["cliente"].nunique()))
     k4.metric(f"Vencen ≤ {dias_vto} días", int(por_vencer["idsolicitud"].nunique()))
 
+    st.divider()
+    _seccion_cumplimiento()
+
     if f.empty:
         st.info("No hay inspecciones para los filtros seleccionados.")
         return
@@ -523,15 +605,23 @@ def render_inspecciones(min_f: dt.date, max_f: dt.date) -> None:
         por_mes = m.groupby("mes")["idsolicitud"].nunique().reset_index(name="inspecciones")
         st.plotly_chart(px.bar(por_mes, x="mes", y="inspecciones",
                                title="Inspecciones por mes"), use_container_width=True)
+        pm = por_mes.copy()
+        pm["mes"] = pm["mes"].dt.strftime("%m/%Y")
+        _exportar_metrica(pm.rename(columns={"mes": "Mes", "inspecciones": "Inspecciones"}),
+                          "inspecciones_por_mes", "Inspecciones por mes", "m_mes")
     with c2:
         top_eq = (f.groupby("equipo").size().nlargest(10)
                   .reset_index(name="cantidad").sort_values("cantidad"))
         st.plotly_chart(px.bar(top_eq, x="cantidad", y="equipo", orientation="h",
                                title="Equipos más inspeccionados"), use_container_width=True)
+        _exportar_metrica(top_eq.rename(columns={"equipo": "Equipo", "cantidad": "Cantidad"}),
+                          "equipos_mas_inspeccionados", "Equipos más inspeccionados", "m_eq")
     top_cli = (f.groupby("cliente")["idsolicitud"].nunique().nlargest(10)
                .reset_index(name="inspecciones").sort_values("inspecciones"))
     st.plotly_chart(px.bar(top_cli, x="inspecciones", y="cliente", orientation="h",
                            title="Clientes con más inspecciones"), use_container_width=True)
+    _exportar_metrica(top_cli.rename(columns={"cliente": "Cliente", "inspecciones": "Inspecciones"}),
+                      "clientes_mas_inspecciones", "Clientes con más inspecciones", "m_cli")
 
     st.subheader("Detalle")
     display = df_para_mostrar(f)
@@ -1594,15 +1684,25 @@ def _listado_empresas() -> None:
     if res.empty:
         st.info("No hay empresas que coincidan con la búsqueda.")
         return
-    st.caption(f"{len(res)} empresa(s). Hacé clic en una para ver su ficha.")
-    for r in res.itertuples():
-        sub = " · ".join(p for p in [
-            f"CUIT {fmt(r.cuit)}" if _norm(r.cuit) else None,
-            fmt(r.domicilio) if _norm(r.domicilio) else None] if p)
-        etiqueta = f"🏢  {fmt(r.razon_social)}" + (f"   —   {sub}" if sub else "")
-        if st.button(etiqueta, key=f"emp_open_{r.id}", use_container_width=True):
-            st.session_state["emp_sel"] = str(r.id)
-            st.rerun()
+    st.caption(f"{len(res)} empresa(s). Hacé clic en la fila de una empresa "
+               "para abrir su legajo.")
+    grid = pd.DataFrame({
+        "Razón social": res["razon_social"].fillna("").values,
+        "CUIT": res["cuit"].fillna("").values,
+        "Email": res["email"].fillna("").values,
+        "Teléfono": res["telefono"].fillna("").values,
+        "Domicilio": res["domicilio"].fillna("").values,
+    })
+    sel = st.dataframe(
+        grid, hide_index=True, use_container_width=True,
+        on_select="rerun", selection_mode="single-row", key="emp_grid")
+    try:
+        filas = list(sel.selection.rows)
+    except AttributeError:
+        filas = []
+    if filas:
+        st.session_state["emp_sel"] = str(res.iloc[filas[0]]["id"])
+        st.rerun()
 
 
 def _ficha_empresa(idcliente: str) -> None:
@@ -1913,15 +2013,62 @@ def render_equipos_inv() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Pestaña: Datos (agrupa Equipos, Usuarios y Empresas en sub-pestañas)
+# Pestaña: KPI y Objetivos (carga de metas por KPI/año/mes)
+# --------------------------------------------------------------------------- #
+def render_kpi() -> None:
+    st.subheader("KPI y Objetivos")
+    if not _es_mysql():
+        st.info("La carga de objetivos sólo está disponible en producción (MySQL).")
+        return
+    st.caption("Definí la meta de cada KPI. 'Anual' = objetivo de todo el año; "
+               "'Mensual' = objetivo de ese mes. El cumplimiento se ve en el Dashboard.")
+    hoy = dt.date.today()
+    c1, c2, c3 = st.columns([1, 1.4, 2])
+    anio = int(c1.number_input("Año", min_value=2000, max_value=2100,
+                               value=hoy.year, step=1, key="kpi_anio"))
+    periodo = c2.radio("Período", ["Anual", "Mensual"], horizontal=True, key="kpi_per")
+    mes = 0
+    if periodo == "Mensual":
+        mes = int(c3.selectbox("Mes", list(range(1, 13)), index=hoy.month - 1,
+                               format_func=lambda m: MESES[m - 1], key="kpi_mes"))
+    obj = datos.kpi_objetivos(anio)
+    obj_map = {(r.kpi, int(r.mes)): float(r.objetivo) for r in obj.itertuples()}
+    ed = pd.DataFrame([{"kpi": k, "Métrica": label,
+                        "Objetivo": obj_map.get((k, mes), 0.0)}
+                       for k, label, _ in KPIS])
+    edited = st.data_editor(
+        ed, hide_index=True, use_container_width=True,
+        column_order=["Métrica", "Objetivo"],
+        column_config={
+            "Métrica": st.column_config.TextColumn(disabled=True),
+            "Objetivo": st.column_config.NumberColumn(min_value=0.0, step=1.0,
+                                                      format="%.2f")},
+        key=f"kpi_editor_{anio}_{mes}")
+    periodo_txt = f"{MESES[mes - 1]} {anio}" if mes else f"año {anio}"
+    if st.button(f"Guardar objetivos ({periodo_txt})", type="primary"):
+        try:
+            for i in range(len(edited)):
+                datos.guardar_kpi_objetivo(
+                    str(ed.iloc[i]["kpi"]), anio, mes,
+                    float(edited.iloc[i]["Objetivo"] or 0))
+            st.cache_data.clear()
+            st.success("Objetivos guardados.")
+            st.rerun()
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"No se pudo guardar: {exc}")
+
+
+# --------------------------------------------------------------------------- #
+# Pestaña: Datos (agrupa Equipos, Usuarios, Empresas y KPI en sub-pestañas)
 # --------------------------------------------------------------------------- #
 def render_datos() -> None:
     sub = []
     if _puede_escribir():
-        sub.append(("Equipos", render_equipos_inv))
+        sub.append(("Equipos por empresa", render_equipos_inv))
     if _puede_admin_usuarios():
         sub.append(("Usuarios", render_usuarios))
         sub.append(("Empresas", render_empresas))
+        sub.append(("KPI y Objetivos", render_kpi))
     if not sub:
         st.info("No tenés permisos para esta sección.")
         return
@@ -2183,7 +2330,7 @@ except Exception as exc:  # noqa: BLE001
 
 # Pestañas según el rol del usuario (ver ROLES / permisos)
 _secciones = [
-    ("Inspecciones", lambda: render_inspecciones(MIN_F, MAX_F)),
+    ("Dashboard", lambda: render_inspecciones(MIN_F, MAX_F)),
     ("Detalle inspección", lambda: render_detalle(MIN_F, MAX_F)),
 ]
 if _puede_escribir():
