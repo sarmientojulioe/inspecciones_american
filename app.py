@@ -46,6 +46,12 @@ h1, h2, h3 {{ color: {cfg.COLOR_NAVY}; font-family: Lato, sans-serif; }}
 .stTabs [data-baseweb="tab-list"] {{
     background: #FFFFFF; border-radius: 10px; padding: 6px;
     border: 1px solid #D6E2F0; gap: 4px;
+    flex-wrap: wrap;  /* acomoda las pestañas en varias filas en vez de desbordar */
+}}
+/* Ocultar las flechas de scroll de la barra de pestañas (ya no hacen falta),
+   sin tocar las pestañas en sí (que también son <button>). */
+.stTabs [data-baseweb="tab-list"] > button:not([data-baseweb="tab"]):not([role="tab"]) {{
+    display: none !important;
 }}
 .stTabs [data-baseweb="tab"] {{ border-radius: 8px; padding: 6px 14px; }}
 .stTabs [data-baseweb="tab"][aria-selected="true"] {{
