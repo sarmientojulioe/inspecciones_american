@@ -94,6 +94,11 @@ def pdf_preliminar(idd) -> bytes:
 
 
 @st.cache_data(ttl=600)
+def pdf_preliminar_foto(idd) -> bytes:
+    return certificados.informe_preliminar_foto_pdf(idd)
+
+
+@st.cache_data(ttl=600)
 def pdf_certificado(idd) -> bytes:
     return certificados.certificacion_periodica_pdf(idd)
 
@@ -159,6 +164,21 @@ def cat_resultados() -> pd.DataFrame:
 @st.cache_data(ttl=3600)
 def cat_tiposresultado2() -> pd.DataFrame:
     return datos.tiposresultado_tipo2()
+
+
+@st.cache_data(ttl=300)
+def cat_leyendas() -> list[str]:
+    return datos.leyendas_lista()
+
+
+@st.cache_data(ttl=300)
+def fotos_cached(idd: int) -> list[dict]:
+    return datos.fotos_de(idd)
+
+
+@st.cache_data(ttl=300)
+def nfotos_cached(idd: int) -> int:
+    return datos.contar_fotos(idd)
 
 
 @st.cache_data(ttl=120, show_spinner="Cargando inspecciones...")
@@ -362,6 +382,77 @@ def render_inspecciones(min_f: dt.date, max_f: dt.date) -> None:
 # --------------------------------------------------------------------------- #
 # Pestaña: detalle de una inspección
 # --------------------------------------------------------------------------- #
+def _bloque_fotos(idd: int, num: int) -> None:
+    """Fotos permanentes del Informe Preliminar (cámara/archivo) + leyendas + informe (FOTO).
+    Solo disponible con MySQL (producción)."""
+    if db.ENGINE != "mysql":
+        return
+    n_guard = nfotos_cached(idd)
+    abrir = st.checkbox(
+        f"📷 Fotos del Informe Preliminar ({n_guard} guardada(s))",
+        key=f"chk_fotos_{idd}")
+    if abrir:
+        leyendas = cat_leyendas()
+        guardadas = fotos_cached(idd)
+
+        c_cam, c_up = st.columns(2)
+        cam = c_cam.camera_input("Sacar foto (cámara del celular)", key=f"cam_{idd}")
+        subidas = c_up.file_uploader(
+            "Subir fotos (hasta 4 en total)", type=["png", "jpg", "jpeg"],
+            accept_multiple_files=True, key=f"up_{idd}")
+
+        # Conjunto de trabajo: fotos guardadas + nuevas (cámara/subidas), tope 4
+        trabajo = [{"imagen": g["imagen"], "leyenda": g.get("leyenda", ""), "src": f"g{i}"}
+                   for i, g in enumerate(guardadas)]
+        if cam is not None:
+            trabajo.append({"imagen": cam.getvalue(), "leyenda": "", "src": "cam"})
+        for j, f in enumerate(subidas or []):
+            trabajo.append({"imagen": f.getvalue(), "leyenda": "", "src": f"up{j}"})
+        trabajo = trabajo[:4]
+
+        opciones = [""] + leyendas
+        final = []
+        if trabajo:
+            cols = st.columns(2)
+            for k, it in enumerate(trabajo):
+                with cols[k % 2]:
+                    st.image(it["imagen"], use_container_width=True)
+                    idx = opciones.index(it["leyenda"]) if it["leyenda"] in opciones else 0
+                    ley = st.selectbox("Leyenda", opciones, index=idx,
+                                       key=f"ley_{idd}_{it['src']}")
+                    quitar = st.checkbox("Quitar", key=f"quit_{idd}_{it['src']}")
+                    if not quitar:
+                        final.append({"imagen": it["imagen"], "leyenda": ley})
+
+        # Agregar una leyenda nueva al catálogo (cualquier usuario)
+        nl1, nl2 = st.columns([4, 1])
+        nueva_ley = nl1.text_input(
+            "Nueva leyenda", key=f"nl_{idd}", label_visibility="collapsed",
+            placeholder="Agregar leyenda nueva al catálogo…")
+        if nl2.button("➕ Leyenda", key=f"addley_{idd}", use_container_width=True):
+            if datos.agregar_leyenda(nueva_ley):
+                st.cache_data.clear()
+                st.success("Leyenda agregada al catálogo.")
+                st.rerun()
+            else:
+                st.info("La leyenda está vacía o ya existe.")
+
+        if st.button("💾 Guardar fotos", type="primary", key=f"savef_{idd}"):
+            try:
+                datos.guardar_fotos(idd, final)
+                st.cache_data.clear()
+                st.success(f"{len(final)} foto(s) guardada(s).")
+                st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"No se pudo guardar: {exc}")
+
+    if n_guard:
+        st.download_button(
+            "Informe Preliminar (FOTO) (PDF)", data=pdf_preliminar_foto(idd),
+            file_name=f"informe_preliminar_foto_{num}_{idd}.pdf", mime="application/pdf",
+            key=f"prelimfoto_{idd}", use_container_width=True)
+
+
 def render_detalle(min_f: dt.date, max_f: dt.date) -> None:
     st.subheader("Buscar inspección")
     b1, b2, b3 = st.columns([1.4, 1, 1])
@@ -477,19 +568,7 @@ def render_detalle(min_f: dt.date, max_f: dt.date) -> None:
                 else:
                     st.button("Certificación (solo si Favorable)", disabled=True,
                               key=f"certoff_{idd}", use_container_width=True)
-            if _es_desfavorable(fila.get("resultado")):
-                up = st.file_uploader(
-                    "Adjuntar fotos al Informe Preliminar (hasta 4)",
-                    type=["png", "jpg", "jpeg"], accept_multiple_files=True,
-                    key=f"fotos_{idd}")
-                if up:
-                    imgs = [f.getvalue() for f in up[:4]]
-                    st.download_button(
-                        f"Informe Preliminar con {len(imgs)} foto(s) (PDF)",
-                        data=certificados.informe_preliminar_pdf(idd, fotos=imgs),
-                        file_name=f"informe_preliminar_{num}_{idd}_fotos.pdf",
-                        mime="application/pdf", key=f"prelimf_{idd}",
-                        use_container_width=True)
+            _bloque_fotos(idd, num)
             campos = {EQ_LABELS[c]: fmt(fila[c], c) for c in EQ_LABELS if c in eqs.columns}
             campos = {k: v for k, v in campos.items() if v not in ("—", "")}
             det_df = pd.DataFrame({"Campo": list(campos), "Valor": list(campos.values())})
@@ -1218,6 +1297,19 @@ with _hcol2:
         unsafe_allow_html=True)
 
 _login_gate()
+
+
+@st.cache_resource
+def _init_esquema_fotos():
+    """Crea las tablas de fotos/leyendas si faltan (una vez por proceso)."""
+    try:
+        datos.asegurar_esquema_fotos()
+    except Exception:  # noqa: BLE001
+        pass  # no bloquear la app si no se pudo crear (p. ej. permisos)
+    return True
+
+
+_init_esquema_fotos()
 
 try:
     MIN_F, MAX_F = rango()

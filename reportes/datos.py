@@ -717,3 +717,123 @@ def obleas_en_uso(obleas, excluir_idds) -> pd.DataFrame:
         sql += f" AND ip.IDSOLICITUDDETALLE NOT IN ({ph_i})"
         params += excluir_idds
     return db.run_query(sql, params)
+
+
+# --------------------------------------------------------------------------- #
+# Fotos del Informe Preliminar (permanentes en MySQL) y leyendas predeterminadas
+# --------------------------------------------------------------------------- #
+_DDL_INFORME_FOTO = (
+    "CREATE TABLE IF NOT EXISTS informe_foto ("
+    " id INT AUTO_INCREMENT PRIMARY KEY,"
+    " idsolicituddetalle INT NOT NULL,"
+    " orden INT NOT NULL DEFAULT 1,"
+    " imagen LONGBLOB NOT NULL,"
+    " leyenda VARCHAR(255) NULL,"
+    " fechaalta DATETIME NULL,"
+    " KEY idx_informe_foto_idd (idsolicituddetalle)"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+_DDL_FOTO_LEYENDA = (
+    "CREATE TABLE IF NOT EXISTS foto_leyenda ("
+    " id INT AUTO_INCREMENT PRIMARY KEY,"
+    " texto VARCHAR(255) NOT NULL UNIQUE"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+
+def asegurar_esquema_fotos() -> None:
+    """Crea las tablas de fotos/leyendas si no existen. Solo en MySQL (producción);
+    en SQL Anywhere (dev) no se toca el esquema legado."""
+    if db.ENGINE != "mysql":
+        return
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(_DDL_INFORME_FOTO)
+            cur.execute(_DDL_FOTO_LEYENDA)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def fotos_de(idd) -> list[dict]:
+    """Fotos guardadas de un equipo inspeccionado: [{orden, imagen(bytes), leyenda}]."""
+    if db.ENGINE != "mysql":
+        return []
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(db.adapt(
+            "SELECT orden, imagen, leyenda FROM informe_foto "
+            "WHERE idsolicituddetalle = ? ORDER BY orden, id"), [int(idd)])
+        out = []
+        for orden, imagen, leyenda in cur.fetchall():
+            data = bytes(imagen) if imagen is not None else b""
+            out.append({"orden": int(orden or 0), "imagen": data,
+                        "leyenda": "" if leyenda is None else str(leyenda)})
+        return out
+
+
+def contar_fotos(idd) -> int:
+    """Cantidad de fotos guardadas para un equipo inspeccionado."""
+    if db.ENGINE != "mysql":
+        return 0
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(db.adapt(
+            "SELECT COUNT(*) FROM informe_foto WHERE idsolicituddetalle = ?"), [int(idd)])
+        return int(cur.fetchone()[0])
+
+
+def guardar_fotos(idd, fotos: list[dict]) -> int:
+    """Reemplaza TODAS las fotos del equipo por la lista dada (hasta 4).
+    Cada foto: {imagen: bytes, leyenda: str}. Escribe en PRODUCCION."""
+    idd = int(idd)
+    fotos = (fotos or [])[:4]
+    hoy = dt.datetime.now()
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt(
+                "DELETE FROM informe_foto WHERE idsolicituddetalle = ?"), [idd])
+            for i, f in enumerate(fotos, start=1):
+                img = f.get("imagen")
+                if not img:
+                    continue
+                cur.execute(db.adapt(
+                    "INSERT INTO informe_foto "
+                    "(idsolicituddetalle, orden, imagen, leyenda, fechaalta) "
+                    "VALUES (?,?,?,?,?)"),
+                    [idd, i, img, (f.get("leyenda") or None), hoy])
+            conn.commit()
+            return len(fotos)
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def leyendas_lista() -> list[str]:
+    """Catálogo de leyendas predeterminadas (orden alfabético)."""
+    if db.ENGINE != "mysql":
+        return []
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT texto FROM foto_leyenda ORDER BY texto")
+        return [str(r[0]) for r in cur.fetchall()]
+
+
+def agregar_leyenda(texto: str) -> bool:
+    """Agrega una leyenda al catálogo (ignora duplicados). Devuelve True si se insertó."""
+    texto = (texto or "").strip()
+    if not texto:
+        return False
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt(
+                "INSERT IGNORE INTO foto_leyenda (texto) VALUES (?)"), [texto])
+            inserted = cur.rowcount > 0
+            conn.commit()
+            return inserted
+        except Exception:
+            conn.rollback()
+            raise

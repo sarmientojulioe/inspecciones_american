@@ -35,6 +35,8 @@ TITULO = ParagraphStyle("t", parent=NORMAL, fontName="Helvetica-Bold", fontSize=
                         alignment=TA_CENTER)
 BOLD = ParagraphStyle("b", parent=NORMAL, fontName="Helvetica-Bold")
 RIGHT_IT = ParagraphStyle("r", parent=NORMAL, fontName="Helvetica-BoldOblique", alignment=TA_RIGHT)
+CAPTION = ParagraphStyle("cap", parent=NORMAL, fontName="Helvetica-Oblique", fontSize=8,
+                         leading=10, alignment=TA_CENTER)
 
 
 # --------------------------------------------------------------------------- #
@@ -82,6 +84,14 @@ def _img_bytes(data: bytes, max_w: float, max_h: float) -> Image:
     iw, ih = ImageReader(BytesIO(data)).getSize()
     r = min(max_w / iw, max_h / ih)
     return Image(BytesIO(data), width=iw * r, height=ih * r)
+
+
+def _foto_item(f) -> tuple[bytes, str]:
+    """Normaliza un elemento de fotos a (bytes, leyenda). Acepta dict {imagen,leyenda}
+    o bytes sueltos (compatibilidad)."""
+    if isinstance(f, dict):
+        return f.get("imagen") or b"", str(f.get("leyenda") or "").strip()
+    return f or b"", ""
 
 
 def _informe_nro(d) -> str:
@@ -149,12 +159,12 @@ def _build(elementos, apaisado: bool = False) -> bytes:
 # --------------------------------------------------------------------------- #
 # Informe Preliminar de Inspeccion
 # --------------------------------------------------------------------------- #
-def _preliminar_story(d, fotos: list | None = None) -> list:
+def _preliminar_story(d, fotos: list | None = None, titulo_sufijo: str = "") -> list:
     e = []
     # Encabezado: logo + titulo
     enc = Table(
         [[_img(cfg.LOGO_AMERICAN, 4 * cm),
-          Paragraph("<u>INFORME PRELIMINAR DE INSPECCION</u>", TITULO)]],
+          Paragraph(f"<u>INFORME PRELIMINAR DE INSPECCION{titulo_sufijo}</u>", TITULO)]],
         colWidths=[4.5 * cm, CONTENT_W - 4.5 * cm],
     )
     enc.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
@@ -218,27 +228,33 @@ def _preliminar_story(d, fotos: list | None = None) -> list:
     e.append(Paragraph(f"<b><i>{cfg.FIRMA_PRELIMINAR}</i></b>", ParagraphStyle(
         "fp", parent=NORMAL, fontName="Helvetica-BoldOblique", alignment=TA_CENTER)))
 
-    # Anexo fotográfico (hasta 4 fotos)
+    # Anexo fotográfico (hasta 4 fotos, con leyenda debajo de cada una)
     if fotos:
         e.append(PageBreak())
         e.append(Paragraph("<u>ANEXO FOTOGRÁFICO</u>", TITULO))
         e.append(Spacer(1, 0.3 * cm))
         celdas = []
-        for data in fotos[:4]:
+        for f in fotos[:4]:
+            data, leyenda = _foto_item(f)
             try:
-                celdas.append(_img_bytes(data, 8.3 * cm, 6.0 * cm))
+                img = _img_bytes(data, 8.3 * cm, 6.0 * cm)
             except Exception:  # noqa: BLE001
-                pass
+                continue
+            celda = [img]
+            if leyenda:
+                celda.append(Spacer(1, 0.15 * cm))
+                celda.append(Paragraph(leyenda, CAPTION))
+            celdas.append(celda)
         filas = [celdas[i:i + 2] for i in range(0, len(celdas), 2)]
         for f in filas:
             while len(f) < 2:
                 f.append("")
         if filas:
             tf = Table(filas, colWidths=[CONTENT_W / 2] * 2)
-            tf.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            tf.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
                                     ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                                     ("TOPPADDING", (0, 0), (-1, -1), 6),
-                                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+                                    ("BOTTOMPADDING", (0, 0), (-1, -1), 10)]))
             e.append(tf)
 
     # Pie
@@ -264,6 +280,16 @@ def informe_preliminar_pdf(idsolicituddetalle, fotos: list | None = None) -> byt
     if d is None:
         raise ValueError("No se encontró el equipo solicitado.")
     return _build(_preliminar_story(d, fotos=fotos))
+
+
+def informe_preliminar_foto_pdf(idsolicituddetalle) -> bytes:
+    """Informe Preliminar con anexo fotográfico (fotos+leyendas guardadas en la base).
+    Igual al Informe Preliminar pero con ' (FOTO)' en el título."""
+    d = datos.datos_certificado(idsolicituddetalle)
+    if d is None:
+        raise ValueError("No se encontró el equipo solicitado.")
+    fotos = datos.fotos_de(idsolicituddetalle)
+    return _build(_preliminar_story(d, fotos=fotos, titulo_sufijo=" (FOTO)"))
 
 
 _BLANK_KEYS = (
