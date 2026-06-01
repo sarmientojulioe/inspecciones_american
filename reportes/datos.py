@@ -788,6 +788,28 @@ def asegurar_esquema_fotos() -> None:
             raise
 
 
+def verificacion_inspeccion(idd) -> pd.Series | None:
+    """Datos clave de un equipo inspeccionado para la página pública de verificación."""
+    try:
+        idd = int(idd)
+    except (TypeError, ValueError):
+        return None
+    df = db.run_query(
+        "SELECT CAST(s.NUM AS BIGINT) AS num, s.FECHA AS fecha, "
+        "c.RAZON_SOCIAL AS empresa, e.DESCRIPCION AS equipo, "
+        "ip.MARCA_EQUIPO AS marca, ip.MODELO_EQUIPO AS modelo, ip.IDOBLEA AS oblea, "
+        "ip.VTO_INSPECCION AS vto, tr.DESCRIPCION AS resultado, u.NOMBRE AS inspector "
+        "FROM solicitud_servicio_det d "
+        "JOIN solicitud_servicio s ON s.IDSOLICITUD = d.IDSOLICITUD "
+        "JOIN clientes c ON c.IDCLIENTE = s.IDCLIENTE "
+        "LEFT JOIN equipos e ON e.IDEQUIPO = d.IDEQUIPO "
+        "JOIN informe_preliminar ip ON ip.IDSOLICITUDDETALLE = d.IDSOLICITUDDETALLE "
+        "LEFT JOIN tiposresultado tr ON tr.IDRESULTADO = ip.IDRESULTADO "
+        "LEFT JOIN licusuario u ON u.IDUSUARIO = ip.IDUSUARIO "
+        "WHERE d.IDSOLICITUDDETALLE = ?", [idd])
+    return None if df.empty else df.iloc[0]
+
+
 def asegurar_esquema_roles() -> None:
     """Agrega la columna licusuario.rol si no existe. Solo en MySQL (producción)."""
     if db.ENGINE != "mysql":

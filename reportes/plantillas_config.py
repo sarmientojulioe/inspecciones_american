@@ -3,9 +3,25 @@
 Estos valores estan "quemados" en los reportes originales de PowerBuilder
 (no salen de la base). Ajustar aca si cambian.
 """
+import hashlib
+import os
 from pathlib import Path
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
+
+# --- Verificación de veracidad por QR ---
+# El QR del informe lleva a la página pública de verificación con un token firmado
+# (evita falsificar el QR apuntando a datos arbitrarios).
+VERIFY_BASE_URL = os.getenv("VERIFY_BASE_URL", "https://inspecciones.americanad.ar").rstrip("/")
+VERIFY_SECRET = os.getenv("VERIFY_SECRET", "americanad-inspecciones-veracidad")
+
+
+def token_verificacion(idd) -> str:
+    return hashlib.sha256(f"{idd}:{VERIFY_SECRET}".encode()).hexdigest()[:10]
+
+
+def url_verificacion(idd) -> str:
+    return f"{VERIFY_BASE_URL}/?v={idd}&t={token_verificacion(idd)}"
 
 LOGO_AMERICAN = str(ASSETS / "american_advisor.jpg")
 LOGO_AAD = str(ASSETS / "aad.jpg")

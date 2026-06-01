@@ -24,18 +24,19 @@ from reportes.pdf import df_to_pdf
 
 st.set_page_config(
     page_title="American Advisor - Sistema de inspecciones de equipos",
-    page_icon=cfg.LOGO_AMERICAN, layout="wide")
+    page_icon=cfg.LOGO_AMERICAN, layout="wide", initial_sidebar_state="collapsed")
 
 _LATO_CSS = (Path(__file__).parent / "assets" / "lato.css").read_text(encoding="utf-8")
 st.markdown(f"<style>{_LATO_CSS}</style>", unsafe_allow_html=True)
 
-# Marca American Advisor: navy en títulos, azul en la pestaña activa
+# Marca American Advisor: navy en títulos, azul en la pestaña activa, sin barra lateral
 _BRAND_CSS = f"""
 h1, h2, h3 {{ color: {cfg.COLOR_NAVY}; font-family: Lato, sans-serif; }}
 .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {{
     color: {cfg.COLOR_AZUL};
 }}
 .stTabs [data-baseweb="tab-highlight"] {{ background-color: {cfg.COLOR_AZUL}; }}
+[data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {{ display: none; }}
 """
 st.markdown(f"<style>{_BRAND_CSS}</style>", unsafe_allow_html=True)
 
@@ -1497,59 +1498,110 @@ def _login_gate() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Página pública de verificación de veracidad (QR). Sin login.
+# --------------------------------------------------------------------------- #
+def _pagina_verificacion() -> bool:
+    """Si la URL trae ?v=<idd>&t=<token>, muestra la verificación pública y devuelve True."""
+    v = st.query_params.get("v")
+    if not v:
+        return False
+    t = st.query_params.get("t", "")
+    c1, c2 = st.columns([1, 4])
+    c1.image(cfg.LOGO_AMERICAN, width=160)
+    c2.markdown(
+        f"<h1 style='color:{cfg.COLOR_NAVY};font-family:Lato,sans-serif;font-weight:900;"
+        f"margin-bottom:0'>Verificación de informe</h1>"
+        f"<p style='color:{cfg.COLOR_GRIS};margin-top:0'>American Advisor — "
+        f"Inspecciones y Certificaciones de Equipos</p>", unsafe_allow_html=True)
+    if t != cfg.token_verificacion(v):
+        st.error("⚠️ Código de verificación inválido. No se pudo validar la autenticidad.")
+        return True
+    try:
+        d = datos.verificacion_inspeccion(v)
+    except Exception:  # noqa: BLE001
+        d = None
+    if d is None:
+        st.error("No se encontró la inspección referenciada.")
+        return True
+    st.success("✅ Documento verificado — corresponde a una inspección registrada "
+               "por American Advisor.")
+    fecha = pd.to_datetime(d["fecha"], errors="coerce")
+    vto = pd.to_datetime(d["vto"], errors="coerce")
+
+    def _v(x):
+        return "" if x is None or (isinstance(x, float) and pd.isna(x)) else str(x).strip()
+
+    info = {
+        "Inspección Nº": _v(int(d["num"]) if pd.notna(d["num"]) else ""),
+        "Fecha de inspección": fecha.strftime("%d/%m/%Y") if pd.notna(fecha) else "",
+        "Empresa": _v(d["empresa"]),
+        "Equipo": _v(d["equipo"]),
+        "Marca / Modelo": f"{_v(d['marca'])} {_v(d['modelo'])}".strip(),
+        "Oblea": _v(d["oblea"]),
+        "Resultado": _v(d["resultado"]),
+        "Próxima inspección antes de": vto.strftime("%d/%m/%Y") if pd.notna(vto) else "",
+        "Inspector": _v(d["inspector"]),
+    }
+    st.table(pd.DataFrame({"Campo": list(info), "Valor": list(info.values())}))
+    st.caption("Página oficial de consulta para verificar la autenticidad del informe.")
+    _lc = st.columns(4)
+    for _col, _p in zip(_lc, cfg.LOGOS_CERTIFICACION):
+        _col.image(_p, width=90)
+    return True
+
+
+# --------------------------------------------------------------------------- #
 # Layout principal
 # --------------------------------------------------------------------------- #
-# --- Isologo del área arriba del todo (todas las páginas) ---
-st.sidebar.image(cfg.LOGO_AREA_INSP, use_container_width=True)
+if _pagina_verificacion():
+    st.stop()
 
-# --- Usuario (nombre + tipo) arriba; cerrar sesión debajo ---
+# El esquema (columna rol, tablas de fotos) debe existir ANTES del login,
+# porque _validar_login consulta licusuario.rol.
+_init_esquema()
+
+# --- Encabezado en el cuerpo de la página (sin barra lateral) ---
+_h1, _h2, _h3 = st.columns([1.5, 3, 3])
+with _h1:
+    st.image(cfg.LOGO_AMERICAN, width=190)
+with _h2:
+    st.markdown(
+        f"<h1 style='margin-bottom:0;font-family:Lato,sans-serif;font-weight:900;"
+        f"color:{cfg.COLOR_NAVY}'>American Advisor</h1>"
+        f"<p style='color:{cfg.COLOR_GRIS};font-size:1.2rem;margin-top:0;"
+        f"font-family:Lato,sans-serif'>Sistema de inspecciones de equipos</p>",
+        unsafe_allow_html=True)
+    st.image(cfg.LOGO_AREA_INSP, use_container_width=True)
+with _h3:
+    st.markdown(f"<p style='color:{cfg.COLOR_GRIS};margin-bottom:4px'>"
+                f"<b>Empresa certificada</b></p>", unsafe_allow_html=True)
+    _ic = st.columns(4)
+    _ic[0].image(cfg.LOGOS_CERTIFICACION[0], use_container_width=True)  # ISO 9001
+    _ic[1].image(cfg.LOGOS_CERTIFICACION[1], use_container_width=True)  # ISO 14001
+    _ic[2].image(cfg.LOGOS_CERTIFICACION[2], use_container_width=True)  # ISO 45001
+    _ic[3].image(cfg.LOGOS_CERTIFICACION[3], use_container_width=True)  # OAA
+
+# --- Barra de usuario + Settings (en el cuerpo) ---
 if st.session_state.get("auth"):
-    _su1, _su2 = st.sidebar.columns([1, 1])
-    _su1.markdown(f"**{st.session_state['auth']['nombre']}**")
-    _su2.markdown(
+    _u1, _u2, _u3 = st.columns([4, 1.3, 1.3])
+    _u1.markdown(
+        f"👤 **{st.session_state['auth']['nombre']}** · "
         f"<span style='color:{cfg.COLOR_AZUL};font-weight:700'>{_rol_actual()}</span>",
         unsafe_allow_html=True)
-    if st.sidebar.button("Cerrar sesión", use_container_width=True):
+    if _u3.button("Cerrar sesión", use_container_width=True):
         del st.session_state["auth"]
         st.rerun()
 
-# --- Isologos de certificación (trinorma ISO) arriba, en todas las páginas ---
-st.sidebar.divider()
-_iso = st.sidebar.columns(3)
-_iso[0].image(cfg.LOGOS_CERTIFICACION[0], use_container_width=True)  # ISO 9001
-_iso[1].image(cfg.LOGOS_CERTIFICACION[1], use_container_width=True)  # ISO 14001
-_iso[2].image(cfg.LOGOS_CERTIFICACION[2], use_container_width=True)  # ISO 45001
-
-# --- Settings (info de conexión + probar conexión) ---
-with st.sidebar.expander("⚙️ Settings"):
+with st.expander("⚙️ Settings"):
     st.caption(db.descripcion())
-    if st.button("Probar conexión", use_container_width=True):
+    if st.button("Probar conexión"):
         try:
             base, motor = db.server_info()
             st.success(f"OK: {base} ({motor})")
         except Exception as exc:  # noqa: BLE001
             st.error(f"Sin conexión: {exc}")
 
-# --- OAA abajo ---
-st.sidebar.divider()
-_oa1, _oa2, _oa3 = st.sidebar.columns([1, 2, 1])
-_oa2.image(cfg.LOGOS_CERTIFICACION[3], use_container_width=True)  # OAA
-
-# --- Encabezado de la página (todas las páginas) ---
-_hcol1, _hcol2 = st.columns([1, 4])
-with _hcol1:
-    st.image(cfg.LOGO_AMERICAN, width=200)
-with _hcol2:
-    st.markdown(
-        f"<h1 style='margin-bottom:0;font-family:Lato,sans-serif;font-weight:900;"
-        f"color:{cfg.COLOR_NAVY}'>American Advisor</h1>"
-        f"<p style='color:{cfg.COLOR_GRIS};font-size:1.3rem;margin-top:0;"
-        f"font-family:Lato,sans-serif'>Sistema de inspecciones de equipos</p>",
-        unsafe_allow_html=True)
-
-# El esquema (columna rol, tablas de fotos) debe existir ANTES del login,
-# porque _validar_login consulta licusuario.rol.
-_init_esquema()
+st.divider()
 _login_gate()
 
 try:

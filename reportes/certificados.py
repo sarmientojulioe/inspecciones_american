@@ -100,6 +100,30 @@ def _img_h(path: str, h: float) -> Image:
     return Image(path, width=h * iw / ih, height=h)
 
 
+def _qr_img(url: str, side: float = 2.3 * cm) -> Image:
+    """Código QR (PNG) como imagen para el PDF."""
+    import qrcode
+    qr = qrcode.QRCode(box_size=10, border=1)
+    qr.add_data(url)
+    qr.make(fit=True)
+    buf = BytesIO()
+    qr.make_image(fill_color="black", back_color="white").save(buf, format="PNG")
+    buf.seek(0)
+    return Image(buf, width=side, height=side)
+
+
+def _qr_block(verify_url: str):
+    """Bloque QR + leyenda de verificación de veracidad (para el pie del informe)."""
+    txt = Paragraph(
+        "<b>Verificá la autenticidad de este informe</b> escaneando el código QR. "
+        "Te llevará a la página oficial con los datos de esta inspección.", SMALL)
+    t = Table([[_qr_img(verify_url, 2.3 * cm), txt]],
+              colWidths=[2.7 * cm, CONTENT_W - 2.7 * cm])
+    t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                           ("LEFTPADDING", (1, 0), (1, 0), 8)]))
+    return t
+
+
 def _cert_logos_row(h: float = 0.95 * cm):
     """Fila centrada con los logos de certificación de la empresa (trinorma ISO + OAA)."""
     imgs = []
@@ -181,7 +205,8 @@ def _build(elementos, apaisado: bool = False) -> bytes:
 # --------------------------------------------------------------------------- #
 # Informe Preliminar de Inspeccion
 # --------------------------------------------------------------------------- #
-def _preliminar_story(d, fotos: list | None = None, titulo_sufijo: str = "") -> list:
+def _preliminar_story(d, fotos: list | None = None, titulo_sufijo: str = "",
+                      verify_url: str | None = None) -> list:
     e = []
     # Encabezado: logo + titulo
     enc = Table(
@@ -279,8 +304,13 @@ def _preliminar_story(d, fotos: list | None = None, titulo_sufijo: str = "") -> 
                                     ("BOTTOMPADDING", (0, 0), (-1, -1), 10)]))
             e.append(tf)
 
+    # QR de verificación de veracidad
+    if verify_url:
+        e.append(Spacer(1, 0.4 * cm))
+        e.append(_qr_block(verify_url))
+
     # Logos de certificación de la empresa (trinorma ISO + OAA)
-    e.append(Spacer(1, 0.5 * cm))
+    e.append(Spacer(1, 0.4 * cm))
     e.append(_cert_logos_row())
 
     # Pie
@@ -305,7 +335,8 @@ def informe_preliminar_pdf(idsolicituddetalle, fotos: list | None = None) -> byt
     d = datos.datos_certificado(idsolicituddetalle)
     if d is None:
         raise ValueError("No se encontró el equipo solicitado.")
-    return _build(_preliminar_story(d, fotos=fotos))
+    url = cfg.url_verificacion(idsolicituddetalle)
+    return _build(_preliminar_story(d, fotos=fotos, verify_url=url))
 
 
 def informe_preliminar_foto_pdf(idsolicituddetalle) -> bytes:
@@ -315,7 +346,8 @@ def informe_preliminar_foto_pdf(idsolicituddetalle) -> bytes:
     if d is None:
         raise ValueError("No se encontró el equipo solicitado.")
     fotos = datos.fotos_de(idsolicituddetalle)
-    return _build(_preliminar_story(d, fotos=fotos, titulo_sufijo=" (FOTO)"))
+    url = cfg.url_verificacion(idsolicituddetalle)
+    return _build(_preliminar_story(d, fotos=fotos, titulo_sufijo=" (FOTO)", verify_url=url))
 
 
 _BLANK_KEYS = (
@@ -400,6 +432,10 @@ def certificacion_periodica_pdf(idsolicituddetalle) -> bytes:
         f"{ahora:%H:%M:%S}</b>", NORMAL))
     e.append(Spacer(1, 1.3 * cm))
     e.append(Paragraph(f"<b><i>{cfg.FIRMA_CERTIFICADO}</i></b>", RIGHT_IT))
+
+    # QR de verificación de veracidad
+    e.append(Spacer(1, 0.4 * cm))
+    e.append(_qr_block(cfg.url_verificacion(idsolicituddetalle)))
 
     # Pie con OAA
     e.append(Spacer(1, 0.6 * cm))
