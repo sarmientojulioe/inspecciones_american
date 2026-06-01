@@ -267,6 +267,36 @@ def clientes_lista() -> pd.DataFrame:
         "FROM clientes WHERE ACTIVO = 1 ORDER BY RAZON_SOCIAL")
 
 
+def clientes_admin() -> pd.DataFrame:
+    """Empresas (clientes) con sus datos editables, para la pantalla de administración."""
+    return db.run_query(
+        "SELECT IDCLIENTE AS id, RAZON_SOCIAL AS razon_social, CUIT AS cuit, "
+        "EMAIL AS email, TELEFONO_CELULAR AS telefono, DOMICILIO AS domicilio "
+        "FROM clientes WHERE ACTIVO = 1 ORDER BY RAZON_SOCIAL")
+
+
+_UPD_CLIENTE = ("UPDATE clientes SET RAZON_SOCIAL=?, CUIT=?, EMAIL=?, "
+                "TELEFONO_CELULAR=?, DOMICILIO=? WHERE IDCLIENTE=?")
+
+
+def actualizar_clientes(cambios: list[dict]) -> int:
+    """Actualiza datos de empresas (clientes). Escribe en PRODUCCION."""
+    afectadas = 0
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            for c in cambios:
+                cur.execute(db.adapt(_UPD_CLIENTE), [
+                    c.get("razon_social"), c.get("cuit"), c.get("email"),
+                    c.get("telefono"), c.get("domicilio"), c["id"]])
+                afectadas += cur.rowcount
+            conn.commit()
+            return afectadas
+        except Exception:
+            conn.rollback()
+            raise
+
+
 _SQL_REPORTE = (
     "SELECT CAST(s.NUM AS BIGINT) AS num, s.FECHA AS fecha, c.RAZON_SOCIAL AS empresa, "
     "e.DESCRIPCION AS equipo, ip.MARCA_EQUIPO AS marca, ip.SERIE_EQUIPO AS serie, "
@@ -624,7 +654,7 @@ def crear_inspeccion(cabecera: dict, equipos: list[dict], dry_run: bool = False)
 _SQL_EDICION_BASE = """
 SELECT d.IDSOLICITUDDETALLE AS idd, s.IDSOLICITUD AS idsol, s.ACTIVO AS activo_sol,
        CAST(s.NUM AS BIGINT) AS num, s.FECHA AS fecha,
-       c.RAZON_SOCIAL AS empresa, e.DESCRIPCION AS equipo,
+       c.RAZON_SOCIAL AS empresa, c.EMAIL AS email, e.DESCRIPCION AS equipo,
        ip.IDOBLEA AS oblea, ip.MARCA_EQUIPO AS marca, ip.SERIE_EQUIPO AS serie,
        ip.MATRICULA_EQUIPO AS matricula, ip.OBS AS obs, ip.VTO_INSPECCION AS vto,
        ip.IDRESULTADO AS idresultado, tr.DESCRIPCION AS estado,

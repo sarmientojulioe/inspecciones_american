@@ -181,6 +181,33 @@ def boton_pdf(label: str, data_fn, file_name: str, key: str,
             st.error(f"No se pudo generar el PDF: {exc}")
 
 
+def _pdf_imagenes(data: bytes, dpi: int = 130, max_pag: int = 20) -> list[bytes]:
+    """Renderiza las páginas del PDF a PNG (para ver el informe en la página)."""
+    import fitz  # PyMuPDF
+    out = []
+    doc = fitz.open(stream=data, filetype="pdf")
+    for i, page in enumerate(doc):
+        if i >= max_pag:
+            break
+        out.append(page.get_pixmap(dpi=dpi).tobytes("png"))
+    doc.close()
+    return out
+
+
+def _boton_imprimir(data: bytes, key: str, label: str = "🖨 Imprimir / abrir PDF") -> None:
+    """Botón que abre el PDF en una pestaña nueva (ahí el navegador permite imprimir)."""
+    b64 = base64.b64encode(data).decode()
+    html = (
+        "<button onclick=\"(function(){var b=atob('" + b64 + "');"
+        "var a=new Uint8Array(b.length);for(var i=0;i<b.length;i++)a[i]=b.charCodeAt(i);"
+        "var u=URL.createObjectURL(new Blob([a],{type:'application/pdf'}));"
+        "window.open(u,'_blank');})()\" "
+        "style=\"width:100%;padding:8px;border:1px solid #2884C7;border-radius:8px;"
+        "background:#fff;color:#22355B;font-weight:600;cursor:pointer;font-family:Lato\">"
+        + label + "</button>")
+    components.html(html, height=48)
+
+
 # --------------------------------------------------------------------------- #
 # Acceso a datos (cacheado)
 # --------------------------------------------------------------------------- #
@@ -245,6 +272,11 @@ def zip_certificados(num: int, idds_prelim: tuple, idds_cert: tuple) -> bytes:
 @st.cache_data(ttl=300)
 def cat_clientes() -> pd.DataFrame:
     return datos.clientes_lista()
+
+
+@st.cache_data(ttl=120)
+def cat_clientes_admin() -> pd.DataFrame:
+    return datos.clientes_admin()
 
 
 @st.cache_data(ttl=300)
@@ -501,15 +533,15 @@ def render_inspecciones(min_f: dt.date, max_f: dt.date) -> None:
 # --------------------------------------------------------------------------- #
 # Pestaña: detalle de una inspección
 # --------------------------------------------------------------------------- #
-def _bloque_fotos(idd: int, num: int) -> None:
+def _bloque_fotos(idd: int, num: int, pfx: str = "") -> None:
     """Fotos permanentes del Informe Preliminar (cámara/archivo) + leyendas + informe (FOTO).
-    Solo disponible con MySQL (producción)."""
+    Solo disponible con MySQL (producción). `pfx` evita choques de claves entre pestañas."""
     if db.ENGINE != "mysql":
         return
     n_guard = nfotos_cached(idd)
     abrir = st.checkbox(
         f"📷 Fotos del Informe Preliminar ({n_guard} guardada(s))",
-        key=f"chk_fotos_{idd}")
+        key=f"chk_fotos_{pfx}{idd}")
     if abrir:
         guardadas = fotos_cached(idd)
         if not _puede_escribir():
@@ -526,10 +558,10 @@ def _bloque_fotos(idd: int, num: int) -> None:
         else:
             leyendas = cat_leyendas()
             c_cam, c_up = st.columns(2)
-            cam = c_cam.camera_input("Sacar foto (cámara del celular)", key=f"cam_{idd}")
+            cam = c_cam.camera_input("Sacar foto (cámara del celular)", key=f"cam_{pfx}{idd}")
             subidas = c_up.file_uploader(
                 "Subir fotos (hasta 4 en total)", type=["png", "jpg", "jpeg"],
-                accept_multiple_files=True, key=f"up_{idd}")
+                accept_multiple_files=True, key=f"up_{pfx}{idd}")
 
             # Conjunto de trabajo: fotos guardadas + nuevas (cámara/subidas), tope 4
             trabajo = [{"imagen": g["imagen"], "leyenda": g.get("leyenda", ""), "src": f"g{i}"}
@@ -549,17 +581,17 @@ def _bloque_fotos(idd: int, num: int) -> None:
                         st.image(it["imagen"], use_container_width=True)
                         idx = opciones.index(it["leyenda"]) if it["leyenda"] in opciones else 0
                         ley = st.selectbox("Leyenda", opciones, index=idx,
-                                           key=f"ley_{idd}_{it['src']}")
-                        quitar = st.checkbox("Quitar", key=f"quit_{idd}_{it['src']}")
+                                           key=f"ley_{pfx}{idd}_{it['src']}")
+                        quitar = st.checkbox("Quitar", key=f"quit_{pfx}{idd}_{it['src']}")
                         if not quitar:
                             final.append({"imagen": it["imagen"], "leyenda": ley})
 
             # Agregar una leyenda nueva al catálogo
             nl1, nl2 = st.columns([4, 1])
             nueva_ley = nl1.text_input(
-                "Nueva leyenda", key=f"nl_{idd}", label_visibility="collapsed",
+                "Nueva leyenda", key=f"nl_{pfx}{idd}", label_visibility="collapsed",
                 placeholder="Agregar leyenda nueva al catálogo…")
-            if nl2.button("➕ Leyenda", key=f"addley_{idd}", use_container_width=True):
+            if nl2.button("➕ Leyenda", key=f"addley_{pfx}{idd}", use_container_width=True):
                 if datos.agregar_leyenda(nueva_ley):
                     st.cache_data.clear()
                     st.success("Leyenda agregada al catálogo.")
@@ -567,7 +599,7 @@ def _bloque_fotos(idd: int, num: int) -> None:
                 else:
                     st.info("La leyenda está vacía o ya existe.")
 
-            if st.button("💾 Guardar fotos", type="primary", key=f"savef_{idd}"):
+            if st.button("💾 Guardar fotos", type="primary", key=f"savef_{pfx}{idd}"):
                 try:
                     datos.guardar_fotos(idd, final)
                     st.cache_data.clear()
@@ -578,7 +610,7 @@ def _bloque_fotos(idd: int, num: int) -> None:
 
     if n_guard:
         boton_pdf("Informe Preliminar (FOTO) (PDF)", lambda i=idd: pdf_preliminar_foto(i),
-                  f"informe_preliminar_foto_{num}_{idd}.pdf", f"prelimfoto_{idd}")
+                  f"informe_preliminar_foto_{num}_{idd}.pdf", f"prelimfoto_{pfx}{idd}")
 
 
 def render_detalle(min_f: dt.date, max_f: dt.date) -> None:
@@ -693,7 +725,7 @@ def render_detalle(min_f: dt.date, max_f: dt.date) -> None:
                 else:
                     st.button("Certificación (solo si Favorable)", disabled=True,
                               key=f"certoff_{idd}", use_container_width=True)
-            _bloque_fotos(idd, num)
+            _bloque_fotos(idd, num, "det")
             campos = {EQ_LABELS[c]: fmt(fila[c], c) for c in EQ_LABELS if c in eqs.columns}
             campos = {k: v for k, v in campos.items() if v not in ("—", "")}
             det_df = pd.DataFrame({"Campo": list(campos), "Valor": list(campos.values())})
@@ -1061,17 +1093,9 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
         for _, r in ed.iterrows()}
     sel = st.selectbox("Inspección (buscá por Nº u oblea)", list(emit_map), key="emit_sel")
     idd_sel, estado_sel = emit_map[sel]
-    ce1, ce2 = st.columns(2)
-    with ce1:
-        boton_pdf("Informe Preliminar (PDF)", lambda i=idd_sel: pdf_preliminar(i),
-                  f"informe_preliminar_{idd_sel}.pdf", f"emit_prelim_{idd_sel}")
-    with ce2:
-        if _es_favorable(estado_sel):
-            boton_pdf("Certificación Periódica (PDF)", lambda i=idd_sel: pdf_certificado(i),
-                      f"certificacion_{idd_sel}.pdf", f"emit_cert_{idd_sel}")
-        else:
-            st.button("Certificación (solo si Favorable)", disabled=True,
-                      key=f"emit_certoff_{idd_sel}", use_container_width=True)
+    _frow = f[f["idd"] == idd_sel]
+    if not _frow.empty:
+        _ficha_inspeccion(_frow.iloc[0], "edit")
 
 
 # --------------------------------------------------------------------------- #
@@ -1176,8 +1200,9 @@ def _envio_masivo(dias: int) -> None:
             st.error("No se pudieron enviar:\n- " + "\n- ".join(errores))
 
 
-def _ficha_inspeccion(row) -> None:
-    """Ficha de un equipo inspeccionado: todos los datos + edición de lo guardado."""
+def _ficha_inspeccion(row, pfx: str = "f") -> None:
+    """Ficha de un equipo inspeccionado: todos los datos + edición de lo guardado.
+    `pfx` evita choques de claves cuando la ficha se usa en distintas pestañas."""
     idd = int(row["idd"])
     num = int(row["num"]) if pd.notna(row["num"]) else idd
     fecha_txt = row["fecha"].strftime("%d/%m/%Y") if pd.notna(row["fecha"]) else ""
@@ -1218,22 +1243,24 @@ def _ficha_inspeccion(row) -> None:
         insp_opts = [""] + list(usuarios["nombre"])
         cur_insp = g("inspector")
 
-        with st.form(f"ficha_{idd}"):
+        with st.form(f"ficha_{pfx}_{idd}"):
             c1, c2 = st.columns(2)
-            estado = c1.selectbox("Estado", estado_opts,
+            estado = c1.selectbox("Estado", estado_opts, key=f"est_{pfx}_{idd}",
                                   index=estado_opts.index(cur_estado) if cur_estado in estado_opts else 0)
-            inspector = c2.selectbox("Inspector", insp_opts,
+            inspector = c2.selectbox("Inspector", insp_opts, key=f"insp_{pfx}_{idd}",
                                      index=insp_opts.index(cur_insp) if cur_insp in insp_opts else 0)
             c3, c4 = st.columns(2)
-            oblea = c3.text_input("Oblea", value=g("oblea"))
-            marca = c4.text_input("Marca", value=g("marca"))
+            oblea = c3.text_input("Oblea", value=g("oblea"), key=f"obl_{pfx}_{idd}")
+            marca = c4.text_input("Marca", value=g("marca"), key=f"mar_{pfx}_{idd}")
             c5, c6 = st.columns(2)
-            serie = c5.text_input("N° Serie", value=g("serie"))
-            matricula = c6.text_input("Matrícula", value=g("matricula"))
+            serie = c5.text_input("N° Serie", value=g("serie"), key=f"ser_{pfx}_{idd}")
+            matricula = c6.text_input("Matrícula", value=g("matricula"), key=f"mat_{pfx}_{idd}")
             vto_default = row["vto"].date() if pd.notna(row["vto"]) else None
-            vto = st.date_input("Vto. inspección", value=vto_default, format="DD/MM/YYYY")
-            obs = st.text_area("Observaciones", value=g("obs"))
-            confirmar = st.checkbox("Confirmo guardar los cambios en la base de producción")
+            vto = st.date_input("Vto. inspección", value=vto_default, format="DD/MM/YYYY",
+                                key=f"vto_{pfx}_{idd}")
+            obs = st.text_area("Observaciones", value=g("obs"), key=f"obs_{pfx}_{idd}")
+            confirmar = st.checkbox("Confirmo guardar los cambios en la base de producción",
+                                    key=f"conf_{pfx}_{idd}")
             guardar = st.form_submit_button("Guardar cambios", type="primary")
 
         if guardar:
@@ -1261,16 +1288,63 @@ def _ficha_inspeccion(row) -> None:
                     except Exception as exc:  # noqa: BLE001
                         st.error(f"No se pudo guardar: {exc}")
 
-    st.markdown("**Documentos**")
-    d1, d2 = st.columns(2)
-    with d1:
-        boton_pdf("Informe Preliminar (PDF)", lambda i=idd: pdf_preliminar(i),
-                  f"informe_preliminar_{num}_{idd}.pdf", f"ficha_prelim_{idd}")
-    with d2:
-        if _es_favorable(cur_estado):
-            boton_pdf("Certificación Periódica (PDF)", lambda i=idd: pdf_certificado(i),
-                      f"certificacion_{num}_{idd}.pdf", f"ficha_cert_{idd}")
-    _bloque_fotos(idd, num)
+    st.divider()
+    st.markdown("### Informe Preliminar")
+    try:
+        _pdf_prelim = pdf_preliminar(idd)
+    except Exception as exc:  # noqa: BLE001
+        _pdf_prelim = None
+        st.error(f"No se pudo generar el Informe Preliminar: {exc}")
+
+    if _pdf_prelim:
+        with st.expander("📄 Ver Informe Preliminar en la página", expanded=True):
+            for _pg in _pdf_imagenes(_pdf_prelim):
+                st.image(_pg, use_container_width=True)
+        _dc1, _dc2 = st.columns(2)
+        _dc1.download_button("⬇ Guardar PDF", data=_pdf_prelim,
+                             file_name=f"informe_preliminar_{num}_{idd}.pdf",
+                             mime="application/pdf", use_container_width=True,
+                             key=f"dl_prelim_{pfx}_{idd}")
+        with _dc2:
+            _boton_imprimir(_pdf_prelim, key=f"print_prelim_{pfx}_{idd}")
+
+    if _es_favorable(cur_estado):
+        st.markdown("**Certificación Periódica**")
+        boton_pdf("Ver / descargar Certificación", lambda i=idd: pdf_certificado(i),
+                  f"certificacion_{num}_{idd}.pdf", f"ficha_cert_{pfx}_{idd}")
+
+    # Fotos del informe (cargar / leyendas / guardar / informe FOTO)
+    _bloque_fotos(idd, num, pfx)
+
+    # Enviar por mail (si la empresa tiene email cargado)
+    _email_emp = g("email")
+    if _pdf_prelim and _email_emp:
+        with st.expander("✉️ Enviar por mail"):
+            _dest = st.text_input("Para", value=_email_emp, key=f"mailto_{pfx}_{idd}")
+            _adj_foto = (nfotos_cached(idd) > 0 and
+                         st.checkbox("Adjuntar también el Informe (FOTO)",
+                                     key=f"mailfoto_{pfx}_{idd}"))
+            if st.button("Enviar Informe Preliminar por mail", type="primary",
+                         key=f"sendmail_{pfx}_{idd}"):
+                if not _dest.strip():
+                    st.warning("Ingresá un destinatario.")
+                else:
+                    try:
+                        _adj = [(f"informe_preliminar_{num}.pdf", _pdf_prelim)]
+                        if _adj_foto:
+                            _adj.append((f"informe_preliminar_foto_{num}.pdf",
+                                         pdf_preliminar_foto(idd)))
+                        correo.enviar_mail(
+                            _dest.strip(),
+                            f"Informe Preliminar de Inspección N° {num}",
+                            f"Estimados,\n\nAdjuntamos el Informe Preliminar de "
+                            f"Inspección N° {num}.\n\nAmerican Advisor.", _adj)
+                        st.success(f"Enviado a {_dest.strip()}.")
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"No se pudo enviar: {exc}")
+    elif _pdf_prelim and not _email_emp:
+        st.caption("La empresa no tiene email cargado (cargalo en la pestaña **Empresas** "
+                   "para poder enviar el informe por mail).")
 
 
 def _buscar_inspeccion() -> None:
@@ -1314,7 +1388,7 @@ def _buscar_inspeccion() -> None:
     rows = event.selection.rows if (event and event.selection) else []
     if rows:
         st.divider()
-        _ficha_inspeccion(res.iloc[rows[0]])
+        _ficha_inspeccion(res.iloc[rows[0]], "bus")
 
 
 def render_informes() -> None:
@@ -1479,6 +1553,53 @@ def render_usuarios() -> None:
                     st.rerun()
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"No se pudo crear: {exc}")
+
+
+# --------------------------------------------------------------------------- #
+# Pestaña: administración de empresas (clientes) — escribe en producción
+# --------------------------------------------------------------------------- #
+def render_empresas() -> None:
+    st.subheader("Empresas")
+    if not _puede_admin_usuarios():
+        st.error("No tenés permisos para editar empresas.")
+        return
+    st.warning("Cambios sobre los datos de las empresas (clientes). **Escribe en producción.**")
+    base = cat_clientes_admin()
+    ed = pd.DataFrame({
+        "id": base["id"].values,
+        "Razón social": base["razon_social"].fillna("").values,
+        "CUIT": base["cuit"].fillna("").values,
+        "Email": base["email"].fillna("").values,
+        "Teléfono": base["telefono"].fillna("").values,
+        "Domicilio": base["domicilio"].fillna("").values,
+    })
+    original = ed.copy()
+    st.caption(f"{len(ed)} empresas — editá las celdas y guardá.")
+    cols = ["Razón social", "CUIT", "Email", "Teléfono", "Domicilio"]
+    edited = st.data_editor(
+        ed, hide_index=True, use_container_width=True, key="editor_empresas",
+        column_order=cols,
+        column_config={"Razón social": st.column_config.TextColumn(required=True),
+                       "Domicilio": st.column_config.TextColumn(width="large")})
+    if st.button("Guardar empresas", type="primary"):
+        cambios = []
+        for i in range(len(edited)):
+            nue, vie = edited.iloc[i], original.iloc[i]
+            if any(_cambio(nue[c], vie[c]) for c in cols):
+                cambios.append(dict(
+                    id=str(nue["id"]), razon_social=_norm(nue["Razón social"]),
+                    cuit=_norm(nue["CUIT"]), email=_norm(nue["Email"]),
+                    telefono=_norm(nue["Teléfono"]), domicilio=_norm(nue["Domicilio"])))
+        if not cambios:
+            st.info("No hay cambios para guardar.")
+        else:
+            try:
+                n = datos.actualizar_clientes(cambios)
+                st.cache_data.clear()
+                st.success(f"{n} empresa(s) actualizada(s).")
+                st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"No se pudo guardar: {exc}")
 
 
 # --------------------------------------------------------------------------- #
@@ -1742,6 +1863,7 @@ if _puede_escribir():
 _secciones.append(("Informes", render_informes))
 _secciones.append(("Formularios", render_formularios))
 if _puede_admin_usuarios():
+    _secciones.append(("Empresas", render_empresas))
     _secciones.append(("Usuarios", render_usuarios))
 
 _tabs = st.tabs([s[0] for s in _secciones])
