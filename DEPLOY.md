@@ -80,18 +80,17 @@ que entrar al panel a darle "Deploy" a mano.
 
 Mecanismo: **push a GitHub → GitHub llama un webhook → Easypanel reconstruye el servicio.**
 
-### 6.1. Dominio con HTTPS válido (para el webhook)
+### 6.1. Dominios (ya configurados)
 
-El servidor responde por IP (`167.71.125.132`) con certificado autofirmado, lo que hace que
-GitHub rechace el webhook por SSL. La solución es exponer Easypanel por un **dominio propio**:
+El servidor es la IP `167.71.125.132`. Tanto el panel como la app están expuestos por
+**dominio propio con HTTPS válido** (Let's Encrypt), así que el webhook de GitHub funciona
+con **SSL verification activado**:
 
-1. En el DNS del dominio, crear un registro **A** apuntando a `167.71.125.132`
-   (p. ej. `panel.midominio.com` para el panel, e `inspecciones.midominio.com` para la app).
-2. En Easypanel → **Settings → Domains** (panel) configurar el dominio del panel y dejar que
-   Easypanel emita el **certificado Let's Encrypt** (HTTPS válido automático).
-3. En el servicio `inspecciones_american` → pestaña **Domains**, asignar el dominio de la app.
+- **App** (servicio): `https://inspecciones.americanad.ar/` — la página pública.
+- **Panel** de Easypanel: su propio subdominio HTTPS (`<panel-host>`).
 
-Con HTTPS válido, el webhook de GitHub funciona con **SSL verification activado**.
+> La URL del Deploy Webhook la sirve el **panel** (`<panel-host>`), **no** el dominio de la
+> app. Reemplazar `<panel-host>` por el dominio real del panel donde aparezca abajo.
 
 ### 6.2. Fuente del servicio = GitHub
 
@@ -102,7 +101,8 @@ En Easypanel: proyecto → servicio `inspecciones_american` → pestaña **Sourc
 ### 6.3. Webhook de deploy
 
 1. En el servicio → pestaña **Deployments** → sección **Deploy Webhook**, copiar la URL única
-   (formato `https://panel.midominio.com/api/deploy/<TOKEN>`). Es secreta (equivale a una clave).
+   (formato `https://<panel-host>/api/deploy/<TOKEN>`). La sirve el panel, no la app.
+   Es secreta (equivale a una clave).
 2. En GitHub: repo → **Settings → Webhooks → Add webhook**:
    - **Payload URL:** la URL del paso anterior.
    - **Content type:** `application/json`.
