@@ -119,3 +119,45 @@ al terminar el build.
 
 > Seguridad: el token del webhook permite disparar deploys. Si se filtra, regenerarlo en
 > Easypanel y actualizar la URL en el webhook de GitHub.
+
+## 7. Redirección de `inspecciones.americanad.com.ar` → `inspecciones.americanad.ar`
+
+La app vive en **`inspecciones.americanad.ar`** (Easypanel, IP `167.71.125.132`). Para que también
+se llegue por el dominio corporativo **`inspecciones.americanad.com.ar`** se configuró una
+**redirección 301** hacia el `.ar`.
+
+**Datos del entorno (importante):**
+- El DNS de `americanad.com.ar` es autoritativo en **`ns1/ns2.outdns.net`**.
+- Los subdominios `*.americanad.com.ar` apuntan (registro **A**) al **servidor Plesk
+  `190.105.235.107`**, que corre sobre **Windows / IIS** (no Apache, no Easypanel).
+- Por eso la redirección se hace **en Plesk con un `web.config`** (IIS), NO con `.htaccess`
+  (Apache), y NO con un CNAME (un CNAME choca con el registro A del subdominio).
+
+**Pasos (en Plesk, sobre `americanad.com.ar`):**
+1. **Crear el subdominio** `inspecciones` → queda `inspecciones.americanad.com.ar` (Plesk le crea
+   el registro A apuntando a sí mismo, `190.105.235.107`). NO crear CNAME para este nombre.
+2. **Tildar Let's Encrypt** al crearlo (o luego en *Certificados SSL/TLS*). Sin SSL, el `https`
+   da timeout.
+3. En **Administrador de archivos → carpeta raíz del subdominio** (`inspecciones.americanad.com.ar`),
+   crear/reemplazar **`web.config`** con SOLO esto:
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <configuration>
+     <system.webServer>
+       <httpRedirect enabled="true" destination="https://inspecciones.americanad.ar"
+                     exactDestination="false" httpResponseStatus="Permanent" />
+     </system.webServer>
+   </configuration>
+   ```
+   (`Permanent` = 301; `exactDestination="false"` conserva la ruta solicitada.)
+
+**Verificar:**
+```
+curl -sSIL https://inspecciones.americanad.com.ar
+```
+Debe mostrar `301 Moved Permanently` con `Location: https://inspecciones.americanad.ar/` y luego
+`200 OK`.
+
+> Notas: el `.com.ar` (Plesk/IIS) solo **redirige**; la app real corre en el `.ar` (Easypanel).
+> No usar `.htaccess` (IIS lo ignora). No agregar CNAME de `inspecciones` (da conflicto con el A).
+> Para replicar en otro subdominio, repetir estos pasos cambiando el nombre y el destino.
