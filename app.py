@@ -886,6 +886,39 @@ def render_detalle(min_f: dt.date, max_f: dt.date) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Filtros incrementales reutilizables (por varios criterios)
+# --------------------------------------------------------------------------- #
+def _filtro_equipos(df: pd.DataFrame, key: str) -> pd.DataFrame:
+    """Filtra una lista de tipos de equipo por descripción (texto) y norma IRAM."""
+    c1, c2 = st.columns([2, 1])
+    txt = c1.text_input("Filtrar equipo", key=f"{key}_ftxt",
+                        placeholder="Parte de la descripción…")
+    normas = ["(todas las normas)"] + sorted(
+        {n for n in df["norma"].dropna().astype("string").str.strip() if n})
+    norma = c2.selectbox("Norma IRAM", normas, key=f"{key}_fnorma")
+    f = df
+    if _norm(txt):
+        f = f[f["nombre"].fillna("").str.contains(txt.strip(), case=False, na=False)]
+    if norma != "(todas las normas)":
+        f = f[f["norma"].astype("string").str.strip() == norma]
+    return f
+
+
+def _selector_empresa(key: str, label: str = "Empresa"):
+    """Filtro por razón social / CUIT + selector. Devuelve (idcliente, etiqueta) o (None, None)."""
+    txt = st.text_input(f"Filtrar {label.lower()} (razón social o CUIT)",
+                        key=f"{key}_filtro", placeholder="Escribí para filtrar…")
+    clientes = datos.buscar_clientes(txt, limite=10000)
+    cli_map = {r.razon_social: str(r.id) for r in clientes.itertuples()}
+    if not cli_map:
+        st.info("No hay empresas para ese filtro.")
+        return None, None
+    lbl = st.selectbox(label, list(cli_map), index=None,
+                       placeholder="Elegí la empresa…", key=f"{key}_sel")
+    return (cli_map[lbl], lbl) if lbl else (None, None)
+
+
+# --------------------------------------------------------------------------- #
 # Pestaña: alta de inspección  (ESCRIBE EN PRODUCCIÓN)
 # --------------------------------------------------------------------------- #
 def render_cargar() -> None:
@@ -942,8 +975,10 @@ def render_cargar() -> None:
 
     st.divider()
     st.markdown("**Agregar equipo inspeccionado**")
+    eq_filt = _filtro_equipos(equipos, "ca")
+    eq_map = {r.nombre: (r.id, r.norma, r.procedimiento) for r in eq_filt.itertuples()}
     equipo_lbl = st.selectbox("Equipo", list(eq_map), index=None,
-                              placeholder="Escribí para buscar...", key="ca_equipo")
+                              placeholder="Elegí el equipo…", key="ca_equipo")
     eq_id = eq_norma = eq_proc = None
     if equipo_lbl:
         eq_id, eq_norma, eq_proc = eq_map[equipo_lbl]
@@ -2055,15 +2090,12 @@ def render_equipos_inv() -> None:
         return
     _importar_equipos_inspecciones()
 
-    clientes = cat_clientes()
-    cli_map = {r.nombre: str(r.id) for r in clientes.itertuples()}
-    emp = st.selectbox("Empresa", list(cli_map), index=None,
-                       placeholder="Escribí para buscar la empresa…", key="eqinv_emp")
-    if not emp:
+    idcli, _lbl = _selector_empresa("eqinv", "Empresa")
+    if not idcli:
         st.info("Elegí una empresa para ver y cargar sus equipos.")
         return
     st.warning("Los cambios se guardan sobre la base. **Escribe en producción.**")
-    _inventario_equipos(cli_map[emp], ctx="tab")
+    _inventario_equipos(idcli, ctx="tab")
 
 
 def _importar_equipos_inspecciones() -> None:
@@ -2327,11 +2359,18 @@ def render_datos() -> None:
 # --------------------------------------------------------------------------- #
 def render_formularios() -> None:
     st.subheader("Formularios en blanco para la inspección")
-    st.caption("Elegí el equipo y descargá el informe preliminar y/o el checklist "
-               "en blanco para completar a mano en el campo.")
-    equipos = cat_equipos()
+    st.caption("Filtrá y elegí el equipo, y descargá el informe preliminar y/o el "
+               "checklist en blanco para completar a mano en el campo.")
+    equipos = _filtro_equipos(cat_equipos(), "form")
     eq_map = {r.nombre: r.id for r in equipos.itertuples()}
-    eq_lbl = st.selectbox("Equipo", list(eq_map), key="form_eq")
+    if not eq_map:
+        st.info("No hay equipos para ese filtro.")
+        return
+    eq_lbl = st.selectbox("Equipo", list(eq_map), index=None,
+                          placeholder="Elegí el equipo…", key="form_eq")
+    if not eq_lbl:
+        st.info("Elegí un equipo para descargar los formularios.")
+        return
     idequipo = int(eq_map[eq_lbl])
     c1, c2 = st.columns(2)
     with c1:
