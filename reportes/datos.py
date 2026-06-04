@@ -2206,6 +2206,291 @@ def guardar_baldes(cambios: list[dict]) -> int:
             raise
 
 
+# --------------------------------------------------------------------------- #
+# Instrumentos / equipos de medición (módulo nuevo, solo MySQL).
+# Estado y ubicación son catálogos configurables. "Disponible" y "En uso" son
+# los estados que usa el automatismo de inspección.
+# --------------------------------------------------------------------------- #
+INSTR_DISPONIBLE = "Disponible"
+INSTR_EN_USO = "En uso"
+_ESTADOS_DEFAULT = ["Disponible", "En uso", "Laboratorio", "Baja"]
+_UBIC_DEFAULT = ["Área Cap", "Laboratorio", "Baja"]
+
+_DDL_INSTRUMENTO = (
+    "CREATE TABLE IF NOT EXISTS instrumento ("
+    " id INT AUTO_INCREMENT PRIMARY KEY,"
+    " descripcion VARCHAR(255) NOT NULL,"
+    " nro_serie VARCHAR(100) NULL,"
+    " fecha_calibracion DATE NULL,"
+    " fecha_vto_calibracion DATE NULL,"
+    " estado VARCHAR(50) NOT NULL DEFAULT 'Disponible',"
+    " ubicacion VARCHAR(100) NULL,"
+    " observaciones TEXT NULL,"
+    " activo TINYINT NOT NULL DEFAULT 1,"
+    " fechaalta DATETIME NULL"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+_DDL_INSTRUMENTO_ESTADO = (
+    "CREATE TABLE IF NOT EXISTS instrumento_estado ("
+    " id INT AUTO_INCREMENT PRIMARY KEY, nombre VARCHAR(50) NOT NULL UNIQUE"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+_DDL_INSTRUMENTO_UBIC = (
+    "CREATE TABLE IF NOT EXISTS instrumento_ubicacion ("
+    " id INT AUTO_INCREMENT PRIMARY KEY, nombre VARCHAR(100) NOT NULL UNIQUE"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+_DDL_INSPECCION_INSTRUMENTO = (
+    "CREATE TABLE IF NOT EXISTS inspeccion_instrumento ("
+    " idsolicituddetalle INT NOT NULL, id_instrumento INT NOT NULL,"
+    " fechaalta DATETIME NULL,"
+    " PRIMARY KEY (idsolicituddetalle, id_instrumento)"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+
+def asegurar_esquema_instrumentos() -> None:
+    """Crea las tablas de instrumentos y siembra estados/ubicaciones por defecto."""
+    if db.ENGINE != "mysql":
+        return
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            for ddl in (_DDL_INSTRUMENTO, _DDL_INSTRUMENTO_ESTADO,
+                        _DDL_INSTRUMENTO_UBIC, _DDL_INSPECCION_INSTRUMENTO):
+                cur.execute(ddl)
+            for nom in _ESTADOS_DEFAULT:
+                cur.execute("INSERT IGNORE INTO instrumento_estado (nombre) VALUES (%s)", [nom])
+            for nom in _UBIC_DEFAULT:
+                cur.execute("INSERT IGNORE INTO instrumento_ubicacion (nombre) VALUES (%s)", [nom])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def estados_instrumento() -> list[str]:
+    if db.ENGINE != "mysql":
+        return list(_ESTADOS_DEFAULT)
+    try:
+        df = db.run_query("SELECT nombre FROM instrumento_estado ORDER BY id")
+        return [str(r[0]) for r in df.itertuples(index=False)] or list(_ESTADOS_DEFAULT)
+    except Exception:
+        return list(_ESTADOS_DEFAULT)
+
+
+def ubicaciones_instrumento() -> list[str]:
+    if db.ENGINE != "mysql":
+        return list(_UBIC_DEFAULT)
+    try:
+        df = db.run_query("SELECT nombre FROM instrumento_ubicacion ORDER BY id")
+        return [str(r[0]) for r in df.itertuples(index=False)] or list(_UBIC_DEFAULT)
+    except Exception:
+        return list(_UBIC_DEFAULT)
+
+
+def agregar_estado_instrumento(nombre: str) -> bool:
+    nombre = (nombre or "").strip()
+    if db.ENGINE != "mysql" or not nombre:
+        return False
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute("INSERT IGNORE INTO instrumento_estado (nombre) VALUES (%s)", [nombre])
+            ok = cur.rowcount > 0
+            conn.commit()
+            return ok
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def agregar_ubicacion_instrumento(nombre: str) -> bool:
+    nombre = (nombre or "").strip()
+    if db.ENGINE != "mysql" or not nombre:
+        return False
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute("INSERT IGNORE INTO instrumento_ubicacion (nombre) VALUES (%s)", [nombre])
+            ok = cur.rowcount > 0
+            conn.commit()
+            return ok
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def instrumentos_lista(incluir_baja: bool = True) -> pd.DataFrame:
+    cols = ["id", "descripcion", "nro_serie", "fecha_calibracion", "fecha_vto_calibracion",
+            "estado", "ubicacion", "observaciones"]
+    if db.ENGINE != "mysql":
+        return pd.DataFrame(columns=cols)
+    sql = ("SELECT id, descripcion, nro_serie, fecha_calibracion, fecha_vto_calibracion, "
+           "estado, ubicacion, observaciones FROM instrumento WHERE activo=1")
+    if not incluir_baja:
+        sql += " AND estado <> 'Baja'"
+    sql += " ORDER BY descripcion"
+    df = db.run_query(sql)
+    for c in ("fecha_calibracion", "fecha_vto_calibracion"):
+        df[c] = pd.to_datetime(df[c], errors="coerce")
+    return df
+
+
+def agregar_instrumento(descripcion, nro_serie=None, fecha_calibracion=None,
+                        fecha_vto_calibracion=None, estado="Disponible",
+                        ubicacion=None, observaciones=None) -> int:
+    if db.ENGINE != "mysql":
+        return 0
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO instrumento (descripcion, nro_serie, fecha_calibracion, "
+                "fecha_vto_calibracion, estado, ubicacion, observaciones, activo, fechaalta) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,1,%s)",
+                [str(descripcion).strip(), nro_serie, fecha_calibracion,
+                 fecha_vto_calibracion, estado, ubicacion, observaciones, dt.datetime.now()])
+            conn.commit()
+            return cur.lastrowid
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def actualizar_instrumentos(cambios: list[dict]) -> int:
+    """cambios: [{id, descripcion, nro_serie, fecha_calibracion, fecha_vto_calibracion,
+    estado, ubicacion, observaciones}]. Solo MySQL."""
+    if db.ENGINE != "mysql" or not cambios:
+        return 0
+    n = 0
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            for c in cambios:
+                cur.execute(
+                    "UPDATE instrumento SET descripcion=%s, nro_serie=%s, "
+                    "fecha_calibracion=%s, fecha_vto_calibracion=%s, estado=%s, "
+                    "ubicacion=%s, observaciones=%s WHERE id=%s",
+                    [str(c.get("descripcion") or "").strip(), c.get("nro_serie"),
+                     c.get("fecha_calibracion"), c.get("fecha_vto_calibracion"),
+                     c.get("estado"), c.get("ubicacion"), c.get("observaciones"),
+                     int(c["id"])])
+                n += cur.rowcount
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def set_estado_instrumento(id_instrumento, estado, ubicacion=None) -> int:
+    """Cambio manual de estado (Tomar/Liberar/Laboratorio/Baja). Solo MySQL."""
+    if db.ENGINE != "mysql":
+        return 0
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            if ubicacion is None:
+                cur.execute("UPDATE instrumento SET estado=%s WHERE id=%s",
+                            [estado, int(id_instrumento)])
+            else:
+                cur.execute("UPDATE instrumento SET estado=%s, ubicacion=%s WHERE id=%s",
+                            [estado, ubicacion, int(id_instrumento)])
+            n = cur.rowcount
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def instrumentos_de_inspeccion(idd) -> list[int]:
+    """IDs de instrumentos asignados a un equipo inspeccionado."""
+    if db.ENGINE != "mysql":
+        return []
+    df = db.run_query(
+        "SELECT id_instrumento FROM inspeccion_instrumento WHERE idsolicituddetalle=?",
+        [int(idd)])
+    return [int(r[0]) for r in df.itertuples(index=False)]
+
+
+def guardar_instrumentos_inspeccion(idd, ids_instrumento: list) -> None:
+    """Asocia los instrumentos a la inspección (reemplaza la lista) y marca los
+    elegidos como 'En uso'. Los que se quitan vuelven a 'Disponible'. Solo MySQL."""
+    if db.ENGINE != "mysql":
+        return
+    idd = int(idd)
+    nuevos = {int(x) for x in ids_instrumento}
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT id_instrumento FROM inspeccion_instrumento "
+                        "WHERE idsolicituddetalle=%s", [idd])
+            previos = {int(r[0]) for r in cur.fetchall()}
+            quitar = previos - nuevos
+            agregar = nuevos - previos
+            for iid in quitar:
+                cur.execute("DELETE FROM inspeccion_instrumento WHERE idsolicituddetalle=%s "
+                            "AND id_instrumento=%s", [idd, iid])
+                # libera solo si no quedó en uso en otra inspección
+                cur.execute("SELECT COUNT(*) FROM inspeccion_instrumento WHERE id_instrumento=%s",
+                            [iid])
+                if int(cur.fetchone()[0]) == 0:
+                    cur.execute("UPDATE instrumento SET estado=%s WHERE id=%s AND estado=%s",
+                                [INSTR_DISPONIBLE, iid, INSTR_EN_USO])
+            for iid in agregar:
+                cur.execute("INSERT IGNORE INTO inspeccion_instrumento "
+                            "(idsolicituddetalle, id_instrumento, fechaalta) VALUES (%s,%s,%s)",
+                            [idd, iid, dt.datetime.now()])
+                cur.execute("UPDATE instrumento SET estado=%s WHERE id=%s",
+                            [INSTR_EN_USO, iid])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def cerrar_inspeccion_instrumentos(idd) -> int:
+    """Cierra la inspección: libera (vuelve a 'Disponible') los instrumentos que
+    estaban en uso por ella y que no estén usados por otra. Solo MySQL."""
+    if db.ENGINE != "mysql":
+        return 0
+    idd = int(idd)
+    n = 0
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT id_instrumento FROM inspeccion_instrumento "
+                        "WHERE idsolicituddetalle=%s", [idd])
+            ids = [int(r[0]) for r in cur.fetchall()]
+            cur.execute("DELETE FROM inspeccion_instrumento WHERE idsolicituddetalle=%s", [idd])
+            for iid in ids:
+                cur.execute("SELECT COUNT(*) FROM inspeccion_instrumento WHERE id_instrumento=%s",
+                            [iid])
+                if int(cur.fetchone()[0]) == 0:
+                    cur.execute("UPDATE instrumento SET estado=%s WHERE id=%s AND estado=%s",
+                                [INSTR_DISPONIBLE, iid, INSTR_EN_USO])
+                    n += cur.rowcount
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def instrumentos_por_vencer(dias: int = 30) -> pd.DataFrame:
+    """Instrumentos cuya calibración vence dentro de `dias` días (o ya vencida)."""
+    cols = ["id", "descripcion", "nro_serie", "fecha_vto_calibracion", "dias_restantes"]
+    if db.ENGINE != "mysql":
+        return pd.DataFrame(columns=cols)
+    df = db.run_query(
+        "SELECT id, descripcion, nro_serie, fecha_vto_calibracion, "
+        "DATEDIFF(fecha_vto_calibracion, CURDATE()) AS dias_restantes "
+        "FROM instrumento WHERE activo=1 AND estado <> 'Baja' "
+        "AND fecha_vto_calibracion IS NOT NULL "
+        "AND DATEDIFF(fecha_vto_calibracion, CURDATE()) <= ? "
+        "ORDER BY fecha_vto_calibracion", [int(dias)])
+    df["fecha_vto_calibracion"] = pd.to_datetime(df["fecha_vto_calibracion"], errors="coerce")
+    return df
+
+
 def set_activo_inspeccion(idsolicitud, activo: int) -> int:
     """Baja/alta lógica de una inspección (solicitud_servicio.ACTIVO)."""
     with db.get_connection() as conn:

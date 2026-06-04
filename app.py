@@ -158,7 +158,8 @@ def _init_esquema():
     for fn in (datos.asegurar_esquema_fotos, datos.asegurar_esquema_roles,
                datos.asegurar_esquema_empresas, datos.asegurar_esquema_kpi,
                datos.asegurar_esquema_tipologia, datos.asegurar_esquema_testigo,
-               datos.asegurar_esquema_familia, datos.asegurar_esquema_balde):
+               datos.asegurar_esquema_familia, datos.asegurar_esquema_balde,
+               datos.asegurar_esquema_instrumentos):
         try:
             fn()
         except Exception:  # noqa: BLE001
@@ -728,6 +729,52 @@ def render_inspecciones(min_f: dt.date, max_f: dt.date) -> None:
 # --------------------------------------------------------------------------- #
 # Pestaña: detalle de una inspección
 # --------------------------------------------------------------------------- #
+def _bloque_instrumentos(idd: int, pfx: str = "") -> None:
+    """Instrumentos usados en la inspección: quedan 'En uso' (no los toma otra
+    inspección) y se liberan al cerrar. Solo MySQL y usuarios con escritura."""
+    if db.ENGINE != "mysql" or not _puede_escribir():
+        return
+    st.divider()
+    st.markdown("### Instrumentos / equipos utilizados")
+    inst = datos.instrumentos_lista(incluir_baja=False)
+    actuales = set(datos.instrumentos_de_inspeccion(idd))
+    id2lbl, lbl2id = {}, {}
+    for r in inst.itertuples():
+        iid = int(r.id)
+        # disponibles + los ya asignados a esta inspección (para poder mantenerlos)
+        if str(r.estado) != "Disponible" and iid not in actuales:
+            continue
+        lbl = f"{r.descripcion} · Serie {fmt2(r.nro_serie) or '-'}"
+        id2lbl[iid] = lbl
+        lbl2id[lbl] = iid
+    if not id2lbl:
+        st.caption("No hay instrumentos disponibles. Cargalos en **Datos → Instrumentos**.")
+        return
+    default = [id2lbl[i] for i in actuales if i in id2lbl]
+    sel = st.multiselect(
+        "Instrumentos usados (solo se listan los disponibles y los ya asignados)",
+        list(lbl2id), default=default, key=f"instr_sel_{pfx}_{idd}",
+        help="Al guardar quedan 'En uso' para que no los tome otra inspección.")
+    b1, b2 = st.columns(2)
+    if b1.button("Guardar instrumentos", key=f"instr_g_{pfx}_{idd}"):
+        try:
+            datos.guardar_instrumentos_inspeccion(idd, [lbl2id[s] for s in sel])
+            st.cache_data.clear()
+            st.success("Instrumentos actualizados (los elegidos quedaron 'En uso').")
+            st.rerun()
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"No se pudo guardar: {exc}")
+    if actuales and b2.button("Cerrar inspección (liberar instrumentos)", type="primary",
+                              key=f"instr_c_{pfx}_{idd}"):
+        try:
+            n = datos.cerrar_inspeccion_instrumentos(idd)
+            st.cache_data.clear()
+            st.success(f"Inspección cerrada. {n} instrumento(s) liberado(s) a 'Disponible'.")
+            st.rerun()
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"No se pudo cerrar: {exc}")
+
+
 def _bloque_fotos(idd: int, num: int, pfx: str = "") -> None:
     """Fotos permanentes del Informe Preliminar (cámara/archivo) + leyendas + informe (FOTO).
     Solo disponible con MySQL (producción). `pfx` evita choques de claves entre pestañas."""
@@ -1743,6 +1790,9 @@ def _ficha_inspeccion(row, pfx: str = "f") -> None:
 
     # Fotos del informe (cargar / leyendas / guardar / informe FOTO)
     _bloque_fotos(idd, num, pfx)
+
+    # Instrumentos / equipos utilizados en esta inspección
+    _bloque_instrumentos(idd, pfx)
 
     # Enviar por mail (si la empresa tiene email cargado)
     _email_emp = g("email")
@@ -2925,6 +2975,136 @@ def render_leyendas() -> None:
                 st.info("No había leyendas nuevas para agregar (vacías o ya existían).")
 
 
+def render_instrumentos() -> None:
+    """Instrumentos / equipos de medición: catálogo, estados y calibración."""
+    st.subheader("Instrumentos / equipos de medición")
+    if not _puede_admin_usuarios():
+        st.error("No tenés permisos para esta sección.")
+        return
+    if not _es_mysql():
+        st.caption("Los instrumentos sólo están disponibles en producción (MySQL).")
+        return
+
+    estados = datos.estados_instrumento()
+    ubicaciones = datos.ubicaciones_instrumento()
+
+    # Aviso de calibraciones por vencer (<= 30 días) o vencidas
+    porvencer = datos.instrumentos_por_vencer(30)
+    if not porvencer.empty:
+        msg = []
+        for r in porvencer.itertuples():
+            d = int(r.dias_restantes)
+            cuando = "VENCIDA" if d < 0 else f"vence en {d} día(s)"
+            msg.append(f"• {r.descripcion} (Serie {r.nro_serie or '-'}) — {cuando} "
+                       f"({r.fecha_vto_calibracion:%d/%m/%Y})")
+        st.warning("**Calibraciones por vencer / vencidas:**\n\n" + "\n\n".join(msg))
+
+    df = datos.instrumentos_lista(incluir_baja=True)
+    st.caption(f"{len(df)} instrumento(s). Editá las celdas y guardá. El vencimiento "
+               "se sugiere a +1 año de la calibración, pero podés cambiarlo.")
+    ed = pd.DataFrame({
+        "id": df["id"].values,
+        "Descripción": df["descripcion"].fillna("").values,
+        "N° Serie": df["nro_serie"].fillna("").values,
+        "Calibración": df["fecha_calibracion"].dt.date.values,
+        "Vto. calibración": df["fecha_vto_calibracion"].dt.date.values,
+        "Estado": df["estado"].fillna("").values,
+        "Ubicación": df["ubicacion"].fillna("").values,
+        "Observaciones": df["observaciones"].fillna("").values,
+    }) if not df.empty else pd.DataFrame({
+        "id": pd.Series(dtype="Int64"), "Descripción": pd.Series(dtype="string"),
+        "N° Serie": pd.Series(dtype="string"), "Calibración": pd.Series(dtype="object"),
+        "Vto. calibración": pd.Series(dtype="object"), "Estado": pd.Series(dtype="string"),
+        "Ubicación": pd.Series(dtype="string"), "Observaciones": pd.Series(dtype="string")})
+    orig = ed.copy()
+    cols = ["Descripción", "N° Serie", "Calibración", "Vto. calibración",
+            "Estado", "Ubicación", "Observaciones"]
+    edited = st.data_editor(
+        ed, hide_index=True, use_container_width=True, key="instr_ed",
+        column_order=cols,
+        column_config={
+            "Descripción": st.column_config.TextColumn(required=True),
+            "Calibración": st.column_config.DateColumn(format="DD/MM/YYYY"),
+            "Vto. calibración": st.column_config.DateColumn(format="DD/MM/YYYY"),
+            "Estado": st.column_config.SelectboxColumn(options=estados, required=True),
+            "Ubicación": st.column_config.SelectboxColumn(options=[""] + ubicaciones),
+            "Observaciones": st.column_config.TextColumn(width="medium"),
+        })
+    if st.button("Guardar cambios", type="primary", key="instr_save"):
+        cambios = []
+        for i in range(len(edited)):
+            nue, vie = edited.iloc[i], orig.iloc[i]
+            if any(_cambio(nue[c], vie[c]) for c in cols):
+                fc, fv = nue["Calibración"], nue["Vto. calibración"]
+                cambios.append(dict(
+                    id=int(nue["id"]), descripcion=_norm(nue["Descripción"]),
+                    nro_serie=_norm(nue["N° Serie"]),
+                    fecha_calibracion=None if (fc is None or pd.isna(fc)) else fc,
+                    fecha_vto_calibracion=None if (fv is None or pd.isna(fv)) else fv,
+                    estado=_norm(nue["Estado"]), ubicacion=_norm(nue["Ubicación"]),
+                    observaciones=_norm(nue["Observaciones"])))
+        if not cambios:
+            st.info("No hay cambios para guardar.")
+        else:
+            try:
+                n = datos.actualizar_instrumentos(cambios)
+                st.cache_data.clear()
+                st.success(f"{n} instrumento(s) actualizado(s).")
+                st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"No se pudo guardar: {exc}")
+
+    with st.expander("➕ Nuevo instrumento"):
+        with st.form("instr_nuevo", clear_on_submit=True):
+            d1 = st.text_input("Descripción", key="in_desc")
+            c1, c2 = st.columns(2)
+            ns = c1.text_input("N° de serie", key="in_serie")
+            est = c2.selectbox("Estado", estados, index=0, key="in_estado")
+            c3, c4 = st.columns(2)
+            fcal = c3.date_input("Fecha de calibración", value=dt.date.today(),
+                                 format="DD/MM/YYYY", key="in_fcal")
+            fvto = c4.date_input(
+                "Vto. calibración (+1 año, editable)",
+                value=dt.date(fcal.year + 1, fcal.month, fcal.day)
+                if fcal else dt.date.today(), format="DD/MM/YYYY", key="in_fvto")
+            ubi = st.selectbox("Ubicación", [""] + ubicaciones, key="in_ubic")
+            obs = st.text_area("Observaciones", key="in_obs", height=70)
+            if st.form_submit_button("Agregar instrumento", type="primary"):
+                if not _norm(d1):
+                    st.error("Poné la descripción del instrumento.")
+                else:
+                    datos.agregar_instrumento(
+                        _norm(d1), _norm(ns), fcal, fvto, est, _norm(ubi) or None, _norm(obs))
+                    st.cache_data.clear()
+                    st.success("Instrumento agregado.")
+                    st.rerun()
+
+    with st.expander("⚙️ Estados y ubicaciones (agregar)"):
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            st.markdown("**Estados**")
+            st.caption(" · ".join(estados))
+            ne = st.text_input("Nuevo estado", key="in_nuevo_estado")
+            if st.button("Agregar estado", key="in_add_estado"):
+                if datos.agregar_estado_instrumento(ne):
+                    st.cache_data.clear()
+                    st.success("Estado agregado.")
+                    st.rerun()
+                else:
+                    st.info("Vacío o ya existe.")
+        with cc2:
+            st.markdown("**Ubicaciones**")
+            st.caption(" · ".join(ubicaciones))
+            nu = st.text_input("Nueva ubicación", key="in_nueva_ubic")
+            if st.button("Agregar ubicación", key="in_add_ubic"):
+                if datos.agregar_ubicacion_instrumento(nu):
+                    st.cache_data.clear()
+                    st.success("Ubicación agregada.")
+                    st.rerun()
+                else:
+                    st.info("Vacío o ya existe.")
+
+
 def render_datos() -> None:
     sub = []
     if _puede_escribir():
@@ -2933,6 +3113,7 @@ def render_datos() -> None:
         sub.append(("Tipos de equipo", render_tipos_equipo))
         sub.append(("Catálogos", render_catalogos))
         sub.append(("Leyendas de fotos", render_leyendas))
+        sub.append(("Instrumentos", render_instrumentos))
         sub.append(("Checklist", render_checklist))
         sub.append(("Usuarios", render_usuarios))
         sub.append(("Empresas", render_empresas))
