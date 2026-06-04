@@ -216,6 +216,7 @@ SELECT CAST(s.NUM AS BIGINT)  AS num,
        ip.OBS                 AS observaciones,
        ip.OBS_FINAL           AS observaciones_finales,
        ip.IDOBLEA             AS oblea,
+       d.IDEQUIPO             AS idequipo,
        us.NOMBRE              AS inspector
 FROM solicitud_servicio_det d
 JOIN solicitud_servicio s   ON s.IDSOLICITUD = d.IDSOLICITUD
@@ -244,6 +245,8 @@ def datos_certificado(idsolicituddetalle) -> pd.Series | None:
         df[col] = df[col].astype("string").str.strip()
     fila = df.iloc[0]
     fila["testigo"] = testigo_de(idsolicituddetalle)  # None -> el PDF usa el por defecto
+    fila["familia"] = familia_de(fila.get("idequipo"))  # 'grua' | 'vial'
+    fila["capac_balde"] = balde_de(idsolicituddetalle)  # capacidad de balde (m3) o None
     return fila
 
 
@@ -2004,6 +2007,186 @@ def guardar_testigos(cambios: list[dict]) -> int:
                     "VALUES (%s,%s,%s) "
                     "ON DUPLICATE KEY UPDATE testigo=VALUES(testigo), fechaalta=VALUES(fechaalta)",
                     [int(c["idd"]), t, ahora])
+                n += 1
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
+# --------------------------------------------------------------------------- #
+# Familia del tipo de equipo (grua / vial) — define el formato del cuadro de
+# datos técnicos en la Certificación Periódica. Tabla auxiliar (solo MySQL).
+# --------------------------------------------------------------------------- #
+FAMILIAS = ("grua", "vial")
+FAMILIA_DEFAULT = "grua"
+
+_DDL_EQUIPO_FAMILIA = (
+    "CREATE TABLE IF NOT EXISTS equipo_familia ("
+    " idequipo VARCHAR(50) PRIMARY KEY,"
+    " familia VARCHAR(20) NOT NULL"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+
+def asegurar_esquema_familia() -> None:
+    """Crea la tabla de familia de equipo si no existe. Solo MySQL."""
+    if db.ENGINE != "mysql":
+        return
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(_DDL_EQUIPO_FAMILIA)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def familia_de(idequipo) -> str:
+    """Familia ('grua'|'vial') del tipo de equipo. Default 'grua' si no está set."""
+    if db.ENGINE != "mysql" or idequipo is None:
+        return FAMILIA_DEFAULT
+    try:
+        df = db.run_query(
+            "SELECT familia FROM equipo_familia WHERE idequipo=?", [str(idequipo)])
+    except Exception:
+        return FAMILIA_DEFAULT
+    if df.empty:
+        return FAMILIA_DEFAULT
+    v = str(df.iloc[0]["familia"]).strip().lower()
+    return v if v in FAMILIAS else FAMILIA_DEFAULT
+
+
+def familias_todas() -> dict:
+    """dict {idequipo(str): familia} de los tipos que tienen familia asignada."""
+    out: dict = {}
+    if db.ENGINE != "mysql":
+        return out
+    try:
+        df = db.run_query("SELECT idequipo, familia FROM equipo_familia")
+    except Exception:
+        return out
+    for r in df.itertuples():
+        out[str(r.idequipo)] = str(r.familia).strip().lower()
+    return out
+
+
+def guardar_familias(cambios: list[dict]) -> int:
+    """Upsert de la familia por tipo de equipo. cambios: [{idequipo, familia}].
+    Solo MySQL."""
+    if db.ENGINE != "mysql" or not cambios:
+        return 0
+    n = 0
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            for c in cambios:
+                fam = str(c.get("familia") or "").strip().lower()
+                if fam not in FAMILIAS:
+                    fam = FAMILIA_DEFAULT
+                cur.execute(
+                    "INSERT INTO equipo_familia (idequipo, familia) VALUES (%s,%s) "
+                    "ON DUPLICATE KEY UPDATE familia=VALUES(familia)",
+                    [str(c["idequipo"]), fam])
+                n += 1
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
+# --------------------------------------------------------------------------- #
+# Capacidad de balde (m3) — dato del cuadro técnico de equipos viales.
+# No existe en informe_preliminar; se guarda en tabla auxiliar (solo MySQL).
+# --------------------------------------------------------------------------- #
+_DDL_INFORME_BALDE = (
+    "CREATE TABLE IF NOT EXISTS informe_balde ("
+    " idsolicituddetalle INT PRIMARY KEY,"
+    " capac_balde DECIMAL(12,2) NULL,"
+    " fechaalta DATETIME NULL"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+
+def asegurar_esquema_balde() -> None:
+    """Crea la tabla de capacidad de balde si no existe. Solo MySQL."""
+    if db.ENGINE != "mysql":
+        return
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(_DDL_INFORME_BALDE)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def balde_de(idd):
+    """Capacidad de balde (float) de un equipo inspeccionado, o None."""
+    if db.ENGINE != "mysql":
+        return None
+    try:
+        df = db.run_query(
+            "SELECT capac_balde FROM informe_balde WHERE idsolicituddetalle=?", [int(idd)])
+    except Exception:
+        return None
+    if df.empty:
+        return None
+    v = df.iloc[0]["capac_balde"]
+    if pd.isna(v):
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def baldes_de(idds) -> dict:
+    """dict {idd: capac_balde(float)} para varios equipos (editor). Solo MySQL."""
+    out: dict = {}
+    idds = [int(x) for x in idds]
+    if db.ENGINE != "mysql" or not idds:
+        return out
+    ph = ",".join(["?"] * len(idds))
+    try:
+        df = db.run_query(
+            f"SELECT idsolicituddetalle AS idd, capac_balde FROM informe_balde "
+            f"WHERE idsolicituddetalle IN ({ph})", idds)
+    except Exception:
+        return out
+    for r in df.itertuples():
+        if pd.notna(r.capac_balde):
+            try:
+                out[int(r.idd)] = float(r.capac_balde)
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
+def guardar_baldes(cambios: list[dict]) -> int:
+    """Upsert de capacidad de balde por equipo. cambios: [{idd, capac_balde}].
+    Solo MySQL. None/'' borra el valor."""
+    if db.ENGINE != "mysql" or not cambios:
+        return 0
+    n = 0
+    ahora = dt.datetime.now()
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            for c in cambios:
+                v = c.get("capac_balde")
+                try:
+                    v = None if (v is None or str(v).strip() == "") else float(v)
+                except (TypeError, ValueError):
+                    v = None
+                cur.execute(
+                    "INSERT INTO informe_balde (idsolicituddetalle, capac_balde, fechaalta) "
+                    "VALUES (%s,%s,%s) "
+                    "ON DUPLICATE KEY UPDATE capac_balde=VALUES(capac_balde), "
+                    "fechaalta=VALUES(fechaalta)",
+                    [int(c["idd"]), v, ahora])
                 n += 1
             conn.commit()
             return n

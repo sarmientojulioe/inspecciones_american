@@ -157,7 +157,8 @@ def _init_esquema():
     """Crea tablas de fotos/leyendas y la columna rol si faltan (una vez por proceso)."""
     for fn in (datos.asegurar_esquema_fotos, datos.asegurar_esquema_roles,
                datos.asegurar_esquema_empresas, datos.asegurar_esquema_kpi,
-               datos.asegurar_esquema_tipologia, datos.asegurar_esquema_testigo):
+               datos.asegurar_esquema_tipologia, datos.asegurar_esquema_testigo,
+               datos.asegurar_esquema_familia, datos.asegurar_esquema_balde):
         try:
             fn()
         except Exception:  # noqa: BLE001
@@ -1097,6 +1098,8 @@ def render_cargar() -> None:
     torre = i2.number_input("Torre", min_value=0.0, step=0.1, key="ca_torre")
     long_torre = i3.number_input("Long. máx. torre (Mts)", min_value=0.0, step=0.1, key="ca_ltorre")
     long_pluma = i4.number_input("Long. máx. pluma (Mts)", min_value=0.0, step=0.1, key="ca_lpluma")
+    capac_balde = i1.number_input("Capac. balde (m3) — viales", min_value=0.0, step=0.01,
+                                  key="ca_balde")
     j1, j2, j3 = st.columns(3)
     pluma = j1.text_input("Pluma", key="ca_pluma")
     ganchos = j2.text_input("Ganchos de carga", key="ca_ganchos")
@@ -1127,6 +1130,7 @@ def render_cargar() -> None:
                 serie=serie or None, matricula=matricula or None,
                 anio=int(anio) or None, capac=float(capac), torre=float(torre),
                 long_torre=float(long_torre), long_pluma=float(long_pluma),
+                capac_balde=float(capac_balde) or None,
                 pluma=pluma or None, ganchos=ganchos or None, cabina=cabina or None,
                 estacion=estacion or None, chasis=chasis or None, oblea=oblea or None,
                 vto_insp=vto_insp, obs=obs or None, norma=norma or None,
@@ -1137,7 +1141,8 @@ def render_cargar() -> None:
             for k in ("ca_marca", "ca_modelo", "ca_estructura", "ca_serie", "ca_matricula",
                       "ca_clave", "ca_pluma", "ca_ganchos", "ca_cabina", "ca_estacion",
                       "ca_chasis", "ca_oblea", "ca_domicilio", "ca_numero", "ca_obs",
-                      "ca_anio", "ca_capac", "ca_torre", "ca_ltorre", "ca_lpluma"):
+                      "ca_anio", "ca_capac", "ca_torre", "ca_ltorre", "ca_lpluma",
+                      "ca_balde"):
                 st.session_state.pop(k, None)
             st.rerun()
 
@@ -1166,6 +1171,11 @@ def render_cargar() -> None:
                        idusuario=usr_map[usuario_lbl])
             try:
                 res = datos.crear_inspeccion(cab, staged, dry_run=False)
+                baldes_nuevos = [
+                    {"idd": det["iddet"], "capac_balde": eq.get("capac_balde")}
+                    for eq, det in zip(staged, res["detalles"]) if eq.get("capac_balde")]
+                if baldes_nuevos:
+                    datos.guardar_baldes(baldes_nuevos)
                 st.session_state["equipos_nuevos"] = []
                 st.session_state["ultima_creada"] = {"num": res["num"],
                                                      "detalles": res["detalles"]}
@@ -1250,6 +1260,8 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
     # "Que ha presenciado las pruebas": guardado por inspección; si está vacío,
     # el informe usa el valor por defecto (cfg.TESTIGO_PRUEBAS).
     testigos = datos.testigos_de(f["idd"].tolist())
+    # Capacidad de balde (m3) para equipos viales (tabla auxiliar)
+    baldes = datos.baldes_de(f["idd"].tolist())
 
     ed = pd.DataFrame({
         "idd": f["idd"].values,
@@ -1279,8 +1291,10 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
         "L. Torre": f["long_torre"].values,
         "L. Pluma": f["long_pluma"].values,
         "Año": f["anio"].values,
+        "Cap. Balde": [baldes.get(int(i), None) for i in f["idd"].values],
         "Observaciones": f["obs"].fillna("").values,
     })
+    ed["Cap. Balde"] = pd.to_numeric(ed["Cap. Balde"], errors="coerce")
     original = ed.copy()
     st.caption(f"{len(ed)} equipos inspeccionados — editá las celdas y guardá.")
     edited = st.data_editor(
@@ -1290,7 +1304,7 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
                       "Inspector", "Presenció pruebas",
                       "Modelo", "Estructura", "Pluma", "Torre", "Ganchos", "Cabina",
                       "Capacidad", "Estación", "Chasis", "L. Torre", "L. Pluma", "Año",
-                      "Observaciones"],
+                      "Cap. Balde", "Observaciones"],
         column_config={
             "Nº": st.column_config.NumberColumn(disabled=True, format="%d"),
             "Activa": st.column_config.CheckboxColumn(
@@ -1317,6 +1331,9 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
                 format="%.2f", min_value=0.0, help="Longitud máx. de pluma (Mts)"),
             "Año": st.column_config.NumberColumn(
                 format="%d", min_value=0, max_value=2100, help="Año de fabricación"),
+            "Cap. Balde": st.column_config.NumberColumn(
+                format="%.2f", min_value=0.0,
+                help="Capacidad máx. de balde (m3) — equipos viales"),
             "Observaciones": st.column_config.TextColumn(width="large"),
         })
 
@@ -1381,11 +1398,18 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
                     else:
                         d[key] = int(v) if key == "anio" else float(v)
                 cambios_caract.append(d)
+        cambios_balde = []
+        for i in range(len(edited)):
+            nue, vie = edited.iloc[i], original.iloc[i]
+            if _cambio(nue["Cap. Balde"], vie["Cap. Balde"]):
+                v = nue["Cap. Balde"]
+                cambios_balde.append({"idd": int(nue["idd"]),
+                                      "capac_balde": None if pd.isna(v) else float(v)})
         obleas = [c["oblea"] for c in cambios if c.get("oblea")]
         dup_lote = [o for o, k in Counter(obleas).items() if k > 1]
         en_uso = datos.obleas_en_uso(obleas, [c["idd"] for c in cambios])
         if not (cambios or cambios_activo or cambios_cab or cambios_eq or cambios_testigo
-                or cambios_caract):
+                or cambios_caract or cambios_balde):
             st.info("No hay cambios para guardar.")
         elif dup_lote:
             st.error("Oblea repetida en esta misma edición: " + ", ".join(dup_lote))
@@ -1405,6 +1429,8 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
                     datos.guardar_testigos(cambios_testigo)
                 if cambios_caract:
                     datos.actualizar_caracteristicas(cambios_caract)
+                if cambios_balde:
+                    datos.guardar_baldes(cambios_balde)
                 for idsol, act in cambios_activo.items():
                     datos.set_activo_inspeccion(idsol, act)
                 st.cache_data.clear()  # refresca datos y PDFs con lo recién guardado
@@ -1417,6 +1443,8 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
                     msg += f" Testigo de pruebas en {len(cambios_testigo)} fila(s)."
                 if cambios_caract:
                     msg += f" Características en {len(cambios_caract)} fila(s)."
+                if cambios_balde:
+                    msg += f" Cap. balde en {len(cambios_balde)} fila(s)."
                 if cambios_activo:
                     msg += f" Estado cambiado en {len(cambios_activo)} inspección(es)."
                 st.success(msg)
@@ -1640,6 +1668,10 @@ def _ficha_inspeccion(row, pfx: str = "f") -> None:
                                            value=gnum("long_torre"), key=f"lto_{pfx}_{idd}")
             long_pluma = cc12.number_input("Long. máx. pluma (Mts)", min_value=0.0, step=0.1,
                                            value=gnum("long_pluma"), key=f"lpl_{pfx}_{idd}")
+            capac_balde = st.number_input(
+                "Capacidad máx. de balde (m3)", min_value=0.0, step=0.01,
+                value=float(datos.balde_de(idd) or 0.0), key=f"bal_{pfx}_{idd}",
+                help="Solo equipos viales. Sale en la Certificación Periódica.")
             obs = st.text_area("Observaciones", value=g("obs"), key=f"obs_{pfx}_{idd}")
             confirmar = st.checkbox("Confirmo guardar los cambios en la base de producción",
                                     key=f"conf_{pfx}_{idd}")
@@ -1671,6 +1703,7 @@ def _ficha_inspeccion(row, pfx: str = "f") -> None:
                             estacion=_norm(estacion), chasis=_norm(chasis),
                             anio=int(anio) or None, capac=float(capac), torre=float(torre),
                             long_torre=float(long_torre), long_pluma=float(long_pluma))])
+                        datos.guardar_baldes([{"idd": idd, "capac_balde": float(capac_balde)}])
                         st.cache_data.clear()
                         st.success("Cambios guardados.")
                         st.rerun()
@@ -2595,10 +2628,14 @@ def render_tipos_equipo() -> None:
                       placeholder="Descripción…")
     if _norm(q):
         base = base[base["descripcion"].fillna("").str.contains(q, case=False, na=False)]
+    familias = datos.familias_todas() if _es_mysql() else {}
+    fam_lbl = {"grua": "Grúa", "vial": "Vial"}
     ed = pd.DataFrame({
         "id": base["id"].values,
         "Descripción": base["descripcion"].fillna("").values,
         "Nombre informe": base["nombre_informe"].fillna("").values,
+        "Familia (informe)": [fam_lbl.get(familias.get(str(i), "grua"), "Grúa")
+                              for i in base["id"].values],
         "Norma IRAM": base["norma"].fillna("").values,
         "Procedimiento": base["procedimiento"].fillna("").values,
         "Acredita OAA": (base["acredita_oaa"] == 1).values,
@@ -2607,15 +2644,19 @@ def render_tipos_equipo() -> None:
     })
     original = ed.copy()
     st.caption(f"{len(ed)} tipo(s). Editá las celdas y guardá. "
+               "'Familia (informe)' define el cuadro de datos técnicos de la "
+               "Certificación Periódica (Grúa = formato completo; Vial = balde m3). "
                "'Checklist (ítems)' es de solo lectura.")
     cols = ["Descripción", "Nombre informe", "Norma IRAM", "Procedimiento",
             "Acredita OAA", "Activo"]
     edited = st.data_editor(
         ed, hide_index=True, use_container_width=True, key="editor_tipos",
-        column_order=cols + ["Checklist (ítems)"],
+        column_order=cols + ["Familia (informe)", "Checklist (ítems)"],
         column_config={
             "Descripción": st.column_config.TextColumn(required=True),
             "Procedimiento": st.column_config.TextColumn(width="medium"),
+            "Familia (informe)": st.column_config.SelectboxColumn(
+                options=["Grúa", "Vial"], required=True),
             "Acredita OAA": st.column_config.CheckboxColumn(),
             "Activo": st.column_config.CheckboxColumn(
                 help="Destildá para dar de baja el tipo de equipo"),
@@ -2633,13 +2674,26 @@ def render_tipos_equipo() -> None:
                     procedimiento=_norm(nue["Procedimiento"]),
                     acredita_oaa=bool(nue["Acredita OAA"]),
                     activo=bool(nue["Activo"])))
-        if not cambios:
+        lbl_fam = {"Grúa": "grua", "Vial": "vial"}
+        cambios_fam = []
+        for i in range(len(edited)):
+            if _cambio(edited.iloc[i]["Familia (informe)"],
+                       original.iloc[i]["Familia (informe)"]):
+                cambios_fam.append(dict(
+                    idequipo=str(edited.iloc[i]["id"]),
+                    familia=lbl_fam.get(edited.iloc[i]["Familia (informe)"], "grua")))
+        if not cambios and not cambios_fam:
             st.info("No hay cambios para guardar.")
         else:
             try:
-                n = datos.actualizar_tipos_equipo(cambios)
+                n = datos.actualizar_tipos_equipo(cambios) if cambios else 0
+                if cambios_fam:
+                    datos.guardar_familias(cambios_fam)
                 st.cache_data.clear()
-                st.success(f"{n} tipo(s) actualizado(s).")
+                msg = f"{n} tipo(s) actualizado(s)."
+                if cambios_fam:
+                    msg += f" Familia en {len(cambios_fam)} tipo(s)."
+                st.success(msg)
                 st.rerun()
             except Exception as exc:  # noqa: BLE001
                 st.error(f"No se pudo guardar: {exc}")

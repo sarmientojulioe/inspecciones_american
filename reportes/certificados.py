@@ -164,18 +164,36 @@ def _caja_equipo(d) -> Table:
             return Paragraph("", NORMAL)
         return Paragraph(f"{label} : <b>{value}</b>", NORMAL)
 
-    pares = [
-        ("Marca", _txt(d["marca"])), ("Modelo", _txt(d["modelo"])),
-        ("Estructura", _txt(d["estructura"])), ("Nº de Serie", _txt(d["serie"])),
-        ("Pluma", _txt(d["pluma"])), ("Año de Fabricación", _anio(d["anio_fabrica"])),
-        ("Torre", _num(d["torre"])), ("Ganchos de Carga", _txt(d["ganchos_carga"])),
-        ("Matrícula Nº", _txt(d["matricula"])), ("Cabina", _txt(d["cabina"])),
-        ("Capacidad Máx. de Elevación", _num(d["capac_max_eleva"], "Kg.")),
-        ("Estación de Control", _txt(d["estacion_control"])),
-        ("Longitud Máx. de Torre", _num(d["long_max_torre"], "Mts.")),
-        ("Nº de Chasis", _txt(d["chasis"])),
-        ("Longitud Máx. de Pluma", _num(d["long_max_pluma"], "Mts.")), ("", ""),
-    ]
+    familia = (str(d["familia"]).strip().lower()
+               if "familia" in d and pd.notna(d["familia"]) else "grua")
+    capac_balde = d["capac_balde"] if "capac_balde" in d else None
+
+    if familia == "vial":
+        # Equipos viales (cargadoras, retrocargadoras, etc.): set reducido,
+        # capacidad de balde en m3 (no muestra pluma/torre/ganchos/longitudes).
+        pares = [
+            ("Marca", _txt(d["marca"])), ("Modelo", _txt(d["modelo"])),
+            ("Estructura", _txt(d["estructura"])), ("Nº de Serie", _txt(d["serie"])),
+            ("Matrícula Nº", _txt(d["matricula"])),
+            ("Año de Fabricación", _anio(d["anio_fabrica"])),
+            ("Capacidad Máx. de Balde", _num(capac_balde, "m3")),
+            ("Estación de Control", _txt(d["estacion_control"])),
+            ("Cabina", _txt(d["cabina"])), ("Nº de Chasis", _txt(d["chasis"])),
+        ]
+    else:
+        # Grúas (formato completo).
+        pares = [
+            ("Marca", _txt(d["marca"])), ("Modelo", _txt(d["modelo"])),
+            ("Estructura", _txt(d["estructura"])), ("Nº de Serie", _txt(d["serie"])),
+            ("Pluma", _txt(d["pluma"])), ("Año de Fabricación", _anio(d["anio_fabrica"])),
+            ("Torre", _num(d["torre"])), ("Ganchos de Carga", _txt(d["ganchos_carga"])),
+            ("Matrícula Nº", _txt(d["matricula"])), ("Cabina", _txt(d["cabina"])),
+            ("Capacidad Máx. de Elevación", _num(d["capac_max_eleva"], "Kg.")),
+            ("Estación de Control", _txt(d["estacion_control"])),
+            ("Longitud Máx. de Torre", _num(d["long_max_torre"], "Mts.")),
+            ("Nº de Chasis", _txt(d["chasis"])),
+            ("Longitud Máx. de Pluma", _num(d["long_max_pluma"], "Mts.")), ("", ""),
+        ]
     filas = [[Paragraph(f"Nombre del Equipo : <b>{_txt(d['equipo'])}</b>", NORMAL), ""]]
     for i in range(0, len(pares), 2):
         izq, der = pares[i], pares[i + 1]
@@ -254,7 +272,7 @@ def _preliminar_story(d, fotos: list | None = None, titulo_sufijo: str = "",
 
     e.append(Spacer(1, 0.4 * cm))
     e.append(Paragraph(f"2) Que el resultado de la inspección es : &nbsp;&nbsp;<b>{_txt(d['resultado'])}</b>", NORMAL))
-    _testigo = (_txt(d["testigo"]) if "testigo" in d.index else "") or cfg.TESTIGO_PRUEBAS
+    _testigo = (_txt(d["testigo"]) if "testigo" in d else "") or cfg.TESTIGO_PRUEBAS
     e.append(Paragraph(f"3) Que ha presenciado las pruebas : &nbsp;&nbsp;<b>{_testigo}</b>", NORMAL))
     e.append(Spacer(1, 0.2 * cm))
 
@@ -357,7 +375,7 @@ _BLANK_KEYS = (
     "torre", "ganchos_carga", "matricula", "cabina", "capac_max_eleva",
     "estacion_control", "chasis", "long_max_torre", "long_max_pluma", "clave",
     "procedimiento_referencia", "norma_referencia", "resultado", "vto_inspeccion",
-    "observaciones", "fecha_ult_actualizacion",
+    "observaciones", "fecha_ult_actualizacion", "testigo", "familia", "capac_balde",
 )
 
 
