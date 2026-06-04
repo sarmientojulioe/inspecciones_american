@@ -9,3 +9,6 @@ venv/
 *.sql
 *.sql.gz
 *.crt
+.token
+.token.txt
+*.token
