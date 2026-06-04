@@ -16,6 +16,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas as _canvas
 from reportlab.platypus import (
     HRFlowable, Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
@@ -472,10 +473,18 @@ def certificacion_periodica_pdf(idsolicituddetalle) -> bytes:
 # --------------------------------------------------------------------------- #
 # Checklist (hoja de campo) en blanco, por tipo de equipo
 # --------------------------------------------------------------------------- #
+def _es_grua_movil(nombre) -> bool:
+    n = _txt(nombre).upper().replace("Ú", "U").replace("Ó", "O")
+    return "GRUA MOVIL" in n
+
+
 def checklist_pdf(idequipo) -> bytes:
     eq = datos.equipo_info(idequipo)
     if eq is None:
         raise ValueError("Equipo no encontrado.")
+    # Plantilla fija de GRÚA MÓVIL (igual al formulario R7 HC AT Rev.05)
+    if _es_grua_movil(eq["nombre"]):
+        return hoja_campo_grua_movil_pdf()
     items = datos.checklist_equipo(idequipo)
 
     e = [Table([[_img(cfg.LOGO_AMERICAN, 3.6 * cm),
@@ -539,6 +548,400 @@ def checklist_pdf(idequipo) -> bytes:
     e.append(Paragraph("<b><i>Firma Inspector</i></b>", ParagraphStyle(
         "fch", parent=NORMAL, fontName="Helvetica-BoldOblique", alignment=TA_CENTER)))
     return _build(e)
+
+
+# --------------------------------------------------------------------------- #
+# HOJA DE CAMPO DE INSPECCION - plantilla fija GRÚA MÓVIL (R7 HC AT Rev.05)
+# Hoja en blanco para imprimir y completar a mano en el campo.
+# --------------------------------------------------------------------------- #
+# Cada ítem: (texto, tipo). tipo:
+#   "cb"            -> 4 casillas SD/DL/DG/N/A
+#   ("cbval", u)    -> casillas + línea de valor inline con unidad u ("" = sin unidad)
+#   ("val", u)      -> línea de medición con unidad u (sin casillas)
+#   ("val2", u)     -> dos líneas de medición (lectura/medición) con unidad u
+_HOJA_GRUA = [
+    ("Documentación", [
+        ("Manuales de operación y mantenimiento.", "cb"),
+        ("Registros de mantenimiento.", "cb"),
+        ("Diagrama o tabla de carga.", "cb"),
+    ]),
+    ("Letreros e indicadores", [
+        ("Placa de identificación.", "cb"),
+        ("Graficas de operación y seguridad.", "cb"),
+        ("Indicación de capacidad de carga máxima.", ("cbval", "")),
+    ]),
+    ("Estructura", [
+        ("Chasis o bastidor.", "cb"),
+        ("Estabilizadores (Cajón, brazo, pernos, placa de apoyo, articulaciones, etc.)", "cb"),
+        ("Contrapeso/s.", "cb"),
+    ]),
+    ("Sistema de Bloqueo de Suspensión", [
+        ("Estado general y funcionamiento.", "cb"),
+        ("Perdidas de fluidos.", "cb"),
+    ]),
+    ("Pluma", [
+        ("Tramo fijo.", "cb"),
+        ("Tramos telescópicos.", "cb"),
+        ("Cables de acero y poleas (telescópico).", "cb"),
+        ("Tacos de deslizamineto.", "cb"),
+        ("Puntos de fijación, pernos bujes.", "cb"),
+    ]),
+    ("Plumín", [
+        ("Estado general y estructura.", "cb"),
+        ("Poleas.", "cb"),
+        ("Puntos de fijación, pernos bujes.", "cb"),
+        ("Otro componente.", "cb"),
+    ]),
+    ("Sistema de Giro de Tornamesa", [
+        ("Corona y piñón de giro.", "cb"),
+        ("Rodamiento de giro.", "cb"),
+        ("Freno y bloqueo.", "cb"),
+    ]),
+    ("Cabina (Puesto del Operador)", [
+        ("Estado general, accesos, estructura y protección superior.", "cb"),
+        ("Puerta, ventana, parabrisas y cristales.", "cb"),
+        ("Butaca y cinturón de seguridad.", "cb"),
+        ("Tablero e indicaciones del mismo.", "cb"),
+        ("Comandos, pedales y/o volante.", "cb"),
+        ("Limpiaparabrisas.", "cb"),
+        ("Espejos retrovisores.", "cb"),
+        ("Extintor.", "cb"),
+    ]),
+    ("Motor", [
+        ("Nivel de Fluidos", "cb"),
+        ("Estado general y funcionamiento.", "cb"),
+        ("Sistema de escape.", "cb"),
+        ("Perdidas de fluidos.", "cb"),
+    ]),
+    ("Sistema de Traslación", [
+        ("Transmisión, convertidor y nivel de fluidos.", "cb"),
+        ("Diferenciales y/o mandos finales.", "cb"),
+        ("Ruedas, estado y fijación.", "cb"),
+        ("Sistema de dirección.", "cb"),
+        ("Frenos.", "cb"),
+        ("Sistema de orugas.", "cb"),
+        ("Otros componentes.", "cb"),
+    ]),
+    ("Sistema Hidráulico", [
+        ("Tanque, tapa, visor y nivel de fluido.", "cb"),
+        ("Cañerías y mangueras.", "cb"),
+        ("Bomba/s.", "cb"),
+        ("Válvulas.", "cb"),
+        ("Cilindros de estabilizadores.", "cb"),
+        ("Cilindros de sistema de bloqueo de suspensión.", "cb"),
+        ("Cilindro/s de elevación de pluma.", "cb"),
+        ("Cilindro/s telescópico de pluma.", "cb"),
+        ("Cilindros de sistema de contrapesos.", "cb"),
+        ("Motor hidráulico de giro de tornamesa.", "cb"),
+        ("Motor hidráulico de giro de cabrestante.", "cb"),
+        ("Pérdidas.", "cb"),
+    ]),
+    ("Sistema Neumático", [
+        ("Tanque y compresor.", "cb"),
+        ("Cañerías y mangueras.", "cb"),
+        ("Válvulas.", "cb"),
+        ("Pérdidas.", "cb"),
+        ("Otros componentes.", "cb"),
+    ]),
+    ("Sistema Eléctrico", [
+        ("Baterías.", "cb"),
+        ("Tableros.", "cb"),
+        ("Cableados y conexiones.", "cb"),
+        ("Motores eléctricos.", "cb"),
+        ("Alarma de movimientos y bocina.", "cb"),
+        ("Luces.", "cb"),
+        ("Otros componentes.", "cb"),
+    ]),
+    ("Sistema de Izaje (Cabrestante) – Gancho Principal", [
+        ("Reductor.", "cb"),
+        ("Tambor de arrollamiento.", "cb"),
+        ("Punto fijo.", "cb"),
+        ("Frenos.", "cb"),
+        ("Otros componentes.", "cb"),
+    ]),
+    ("Sistema de Izaje (Cabrestante) – Gancho Auxiliar", [
+        ("Reductor.", "cb"),
+        ("Tambor de arrollamiento.", "cb"),
+        ("Punto fijo.", "cb"),
+        ("Frenos.", "cb"),
+        ("Otros componentes.", "cb"),
+    ]),
+    ("Gancho (Principal)", [
+        ("Estado general.", "cb"),
+        ("Marcado de capacidad.", ("cbval", "Kg.")),
+        ("Cierre de seguridad.", "cb"),
+        ("Gira libremente.", "cb"),
+        ("Apertura de garganta.", ("val", "mm.")),
+    ]),
+    ("Cable de acero (G.Principal)", [
+        ("Estado general.", "cb"),
+        ("Diámetro.", ("val", "mm.")),
+    ]),
+    ("Pasteca", [
+        ("Estado general. (Bloque, terminal, cuña, etc).", "cb"),
+        ("Marcado de capacidad.", ("cbval", "Kg.")),
+        ("Poleas.", "cb"),
+    ]),
+    ("Gancho (Auxiliar)", [
+        ("Estado general. (Bloque, terminal, cuña, etc).", "cb"),
+        ("Marcado de capacidad.", ("cbval", "Kg.")),
+        ("Cierre de seguridad.", "cb"),
+        ("Gira libremente.", "cb"),
+        ("Apertura de garganta.", ("val", "mm.")),
+    ]),
+    ("Cable de acero (G. Auxiliar)", [
+        ("Estado general.", "cb"),
+        ("Diámetro.", ("val", "mm.")),
+    ]),
+    ("Elementos de Seguridad (La verificación de algunos de estos elementos se "
+     "basa en la prueba operativa y la prueba con carga)", [
+         ("Avisador acústico.", "cb"),
+         ("Sensor de hombre presente de butaca.", "cb"),
+         ("Fin de carrera del Gancho Principal.", "cb"),
+         ("Fin de carrera del Gancho Auxiliar.", "cb"),
+         ("Indicador de ángulo de pluma.", "cb"),
+         ("Indicador de extensión de pluma.", "cb"),
+         ("Indicador de capacidad de carga (display).", "cb"),
+         ("Limitador de momento.", "cb"),
+         ("Otros elementos o dispositivos.", "cb"),
+     ]),
+    ("Prueba Operativa", [
+        ("Movimiento de elevación y descenso de la pluma.", "cb"),
+        ("Movimiento de elevación y descenso del o los ganchos.", "cb"),
+        ("Movimiento de extensión y retracción de la pluma.", "cb"),
+        ("Movimiento de giro de la tornamesa.", "cb"),
+        ("Movimiento de estabilizadores.", "cb"),
+        ("Movimiento de traslación y dirección.", "cb"),
+        ("Accionamiento de frenos de servicio y estacionamiento.", "cb"),
+    ]),
+    ("Prueba con Carga (Gancho Principal)", [
+        ("Carga de prueba.", ("val", "kg.")),
+        ("Radio (lectura/medición).", ("val2", "m.")),
+        ("Extensión de pluma (lectura).", ("val", "m.")),
+        ("Ángulo de pluma (lectura/medición).", ("val2", "º")),
+        ("1º referencia.", ("val", "mm.")),
+        ("2º referencia 15 minutos.", ("val", "mm.")),
+        ("Diferencia.", ("val", "mm.")),
+        ("Retención de posición.", "cb"),
+        ("Carga de prueba (limitador de momento).", ("val", "kg.")),
+        ("Radio (actuación del limitador de momento).", ("val", "m.")),
+        ("Extensión de pluma (actuación del limitador de momento).", ("val", "m.")),
+        ("Ángulo de pluma (actuación del limitador de momento).", ("val", "º")),
+        ("Limitador de momento.", "cb"),
+    ]),
+    ("Prueba con Carga (Gancho Auxiliar)", [
+        ("Carga de prueba.", ("val", "kg.")),
+        ("Radio (lectura/medición).", ("val2", "m.")),
+        ("Extensión de pluma (lectura).", ("val", "m.")),
+        ("Ángulo de pluma (lectura/medición).", ("val2", "º")),
+        ("1º referencia.", ("val", "mm.")),
+        ("2º referencia 15 minutos.", ("val", "mm.")),
+        ("Diferencia.", ("val", "mm.")),
+        ("Retención de posición.", "cb"),
+    ]),
+    ("Prueba con Carga (Sobre Neumáticos)", [
+        ("Carga de prueba.", ("val", "kg.")),
+        ("Radio (lectura/medición).", ("val2", "m.")),
+        ("Extensión de pluma (lectura).", ("val", "m.")),
+        ("Ángulo de pluma (lectura/medición).", ("val2", "º")),
+        ("1º referencia.", ("val", "mm.")),
+        ("2º referencia 15 minutos.", ("val", "mm.")),
+        ("Diferencia.", ("val", "mm.")),
+        ("Retención de posición.", "cb"),
+    ]),
+]
+
+_HC_GRUPO = ParagraphStyle("hcg", parent=NORMAL, fontName="Helvetica-BoldOblique",
+                           fontSize=9.5, spaceBefore=4, spaceAfter=2)
+_HC_ITEM = ParagraphStyle("hci", parent=NORMAL, fontSize=8, leading=10)
+_HC_VAL = ParagraphStyle("hcv", parent=NORMAL, fontSize=8, leading=11, alignment=TA_RIGHT)
+_HC_BW = 1.05 * cm          # ancho de cada casilla
+_HC_RESW = 4.6 * cm         # ancho de la columna RESULTADO
+
+
+def _hc_casillas(labels=None, header=False):
+    """Mini-tabla de 4 casillas SD/DL/DG/N/A (vacías para tildar a mano)."""
+    fila = labels if labels else ["", "", "", ""]
+    t = Table([fila], colWidths=[_HC_BW] * 4, rowHeights=[0.44 * cm])
+    estilo = [("ALIGN", (0, 0), (-1, -1), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+              ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7)]
+    if not header:
+        estilo.append(("GRID", (0, 0), (-1, -1), 0.5, colors.grey))
+    t.setStyle(TableStyle(estilo))
+    return t
+
+
+def _hc_resultado(tipo):
+    """Celda de la columna RESULTADO según el tipo de ítem."""
+    if tipo == "cb":
+        return _hc_casillas()
+    clase, unidad = tipo
+    if clase == "cbval":
+        return _hc_casillas()        # la línea de valor va inline en la descripción
+    if clase == "val2":
+        return Paragraph(f"________ {unidad} &nbsp;&nbsp; ________ {unidad}", _HC_VAL)
+    return Paragraph(f"______________ {unidad}", _HC_VAL)   # val
+
+
+def hoja_campo_grua_movil_pdf() -> bytes:
+    e = []
+    # Encabezado: logo + título + logo AAD
+    enc = Table([[_img(cfg.LOGO_AMERICAN, 3.6 * cm),
+                  Paragraph("<u>HOJA DE CAMPO DE INSPECCION</u>", TITULO),
+                  _img(cfg.LOGO_AAD, 2.1 * cm)]],
+                colWidths=[4.0 * cm, CONTENT_W - 6.3 * cm, 2.3 * cm])
+    enc.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                             ("ALIGN", (1, 0), (1, 0), "CENTER"),
+                             ("ALIGN", (2, 0), (2, 0), "RIGHT")]))
+    e += [enc, Spacer(1, 0.25 * cm)]
+
+    # Caja de datos de cabecera (en blanco para completar a mano)
+    normas = Table([[Paragraph("IRAM<br/>3923-1:2009", CAPTION),
+                     Paragraph("ASME<br/>B30.5-2007", CAPTION)]],
+                   colWidths=[(CONTENT_W / 2 - 3.3 * cm) / 2] * 2)
+    normas.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                                ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    lbl = ParagraphStyle("hl", parent=NORMAL, fontSize=8, alignment=TA_RIGHT)
+    cab = Table([
+        [Paragraph("Nombre del Inspector:", lbl), "", Paragraph("Solicitud Nro.:", lbl), ""],
+        [Paragraph("Nombre del Equipo:", lbl),
+         Paragraph("<b>GRÚA MÓVIL</b>", ParagraphStyle("eqc", parent=NORMAL, alignment=TA_CENTER)),
+         Paragraph("Empresa:", lbl), ""],
+        [Paragraph("Nombre del Operador:", lbl), "", Paragraph("Fecha:", lbl), ""],
+        [Paragraph("Norma Aplicable", lbl), normas, Paragraph("Horómetro:", lbl), ""],
+    ], colWidths=[3.3 * cm, CONTENT_W / 2 - 3.3 * cm, 2.6 * cm, CONTENT_W / 2 - 2.6 * cm])
+    cab.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    e += [cab, Spacer(1, 0.3 * cm)]
+
+    # Limpieza del Equipo (APTO / NO APTO)
+    limp = Table([
+        [Paragraph("<b>DESCRIPCION</b>", ParagraphStyle("d0", parent=NORMAL, alignment=TA_CENTER)),
+         Paragraph("<b>APTO</b>", ParagraphStyle("a0", parent=NORMAL, alignment=TA_CENTER)),
+         Paragraph("<b>NO APTO</b>", ParagraphStyle("a1", parent=NORMAL, alignment=TA_CENTER))],
+        [Paragraph("Limpieza del Equipo <i>(En caso de no APTO, especificar en "
+                   "observaciones)</i>", _HC_ITEM), "", ""],
+    ], colWidths=[CONTENT_W - 5.0 * cm, 2.5 * cm, 2.5 * cm])
+    limp.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d9d9d9")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    e += [limp, Spacer(1, 0.25 * cm)]
+
+    # Tabla principal: DESCRIPCION | RESULTADO (SD DL DG N/A)
+    data = [[Paragraph("<b>DESCRIPCION</b>",
+                       ParagraphStyle("dh", parent=NORMAL, alignment=TA_CENTER,
+                                      textColor=colors.white)),
+             _hc_casillas(["SD", "DL", "DG", "N/A"], header=True)]]
+    estilo = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f4e79")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (0, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.grey),
+    ]
+    for grupo, items in _HOJA_GRUA:
+        data.append([Paragraph(grupo, _HC_GRUPO), ""])
+        estilo.append(("SPAN", (0, len(data) - 1), (1, len(data) - 1)))
+        for texto, tipo in items:
+            desc = texto
+            if isinstance(tipo, tuple) and tipo[0] == "cbval":
+                u = (" " + tipo[1]) if tipo[1] else ""
+                desc = f"{texto} &nbsp;____________{u}"
+            data.append([Paragraph(desc, _HC_ITEM), _hc_resultado(tipo)])
+    tabla = Table(data, colWidths=[CONTENT_W - _HC_RESW, _HC_RESW], repeatRows=1)
+    tabla.setStyle(TableStyle(estilo))
+    e.append(tabla)
+
+    # Observaciones
+    e.append(Spacer(1, 0.4 * cm))
+    e.append(HRFlowable(width="100%", thickness=0.6, color=colors.black))
+    e.append(Paragraph("<i>Observaciones</i>",
+                       ParagraphStyle("obs", parent=NORMAL, alignment=TA_CENTER, fontSize=11)))
+    e.append(HRFlowable(width="100%", thickness=0.6, color=colors.black))
+    caja_obs = Table([[""]], colWidths=[CONTENT_W], rowHeights=[3.2 * cm])
+    caja_obs.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.4, colors.white)]))
+    e.append(caja_obs)
+
+    # Listado de equipos utilizados (Int.01 a Int.DIN AAD-04)
+    e.append(Paragraph("<b>Listado de equipos utilizados:</b>", _HC_ITEM))
+    e.append(Spacer(1, 0.15 * cm))
+    etiquetas = ([f"Int.{i:02d}:" for i in range(1, 20)] + ["Int.DIN AAD-04:"])
+    # 5 filas x 4 columnas, llenando por columnas (01-05, 06-10, 11-15, 16-19+DIN)
+    filas_int = []
+    for r in range(5):
+        fila = []
+        for col in range(4):
+            idx = col * 5 + r
+            et = etiquetas[idx] if idx < len(etiquetas) else ""
+            fila.append(Paragraph(et, ParagraphStyle("il", parent=NORMAL, fontSize=8,
+                                                     alignment=TA_RIGHT)))
+            fila.append("")  # casilla en blanco
+        filas_int.append(fila)
+    cw_int = []
+    for _ in range(4):
+        cw_int += [2.9 * cm, CONTENT_W / 4 - 2.9 * cm]
+    inst = Table(filas_int, colWidths=cw_int, rowHeights=[0.52 * cm] * 5)
+    inst.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BOX", (1, 0), (1, -1), 0.5, colors.grey), ("BOX", (3, 0), (3, -1), 0.5, colors.grey),
+        ("BOX", (5, 0), (5, -1), 0.5, colors.grey), ("BOX", (7, 0), (7, -1), 0.5, colors.grey),
+        ("INNERGRID", (1, 0), (1, -1), 0.5, colors.grey),
+        ("INNERGRID", (3, 0), (3, -1), 0.5, colors.grey),
+        ("INNERGRID", (5, 0), (5, -1), 0.5, colors.grey),
+        ("INNERGRID", (7, 0), (7, -1), 0.5, colors.grey),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    e.append(inst)
+    return _build_hoja(e)
+
+
+class _HojaCanvas(_canvas.Canvas):
+    """Canvas que dibuja el pie (referencias + revisión + 'Página X de Y') en
+    cada hoja, con el total de páginas (dos pasadas)."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._saved = []
+
+    def showPage(self):
+        self._saved.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        total = len(self._saved)
+        for st in self._saved:
+            self.__dict__.update(st)
+            self._pie(total)
+            super().showPage()
+        super().save()
+
+    def _pie(self, total):
+        w = A4[0]
+        self.setFont("Helvetica-BoldOblique", 7)
+        self.drawCentredString(
+            w / 2, 1.25 * cm,
+            "REFERENCIAS:  SD = Sin Daño; DL = Daño Leve; DG = Daño Grave; N/A = No Aplica")
+        self.setLineWidth(0.5)
+        self.line(MARGIN, 1.05 * cm, w - MARGIN, 1.05 * cm)
+        self.setFont("Helvetica", 7)
+        self.drawCentredString(w / 2, 0.7 * cm, "R7 HC AT - REV 05 - Octubre 2025")
+        self.drawRightString(w - MARGIN, 0.7 * cm,
+                             f"Página {self._pageNumber} de {total}")
+
+
+def _build_hoja(elementos) -> bytes:
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=MARGIN, rightMargin=MARGIN,
+                            topMargin=1.0 * cm, bottomMargin=1.7 * cm)
+    doc.build(elementos, canvasmaker=_HojaCanvas)
+    return buf.getvalue()
 
 
 # --------------------------------------------------------------------------- #
