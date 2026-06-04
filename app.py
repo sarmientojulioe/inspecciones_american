@@ -2312,6 +2312,35 @@ def render_checklist() -> None:
                     st.cache_data.clear()
                     st.rerun()
 
+    # Importar el checklist desde otro tipo de equipo que sirva de modelo.
+    modelos = tipos[(tipos["id"].astype(str) != idequipo) & (tipos["items_checklist"] > 0)]
+    with st.expander("📋 Importar desde otro tipo de equipo (modelo)", expanded=df.empty):
+        if modelos.empty:
+            st.caption("No hay otro tipo de equipo con checklist cargado para usar de modelo.")
+        else:
+            mmap = {f"{r.descripcion}  ({int(r.items_checklist)} ítems)": str(r.id)
+                    for r in modelos.itertuples()}
+            with st.form("chk_import", clear_on_submit=True):
+                msel = st.selectbox("Tipo de equipo modelo", list(mmap), index=None,
+                                    placeholder="Elegí el equipo del que copiar el checklist…",
+                                    key="chk_modelo")
+                st.caption("Copia los ítems del modelo que falten en este tipo "
+                           "(no duplica ni borra lo que ya tiene).")
+                if st.form_submit_button("Importar checklist", type="primary"):
+                    if not msel:
+                        st.error("Elegí un tipo de equipo modelo.")
+                    else:
+                        try:
+                            n = datos.importar_checklist_desde(idequipo, mmap[msel])
+                            st.cache_data.clear()
+                            if n:
+                                st.success(f"{n} ítem(s) importado(s) desde «{msel}».")
+                            else:
+                                st.info("Este tipo ya tenía todos los ítems del modelo.")
+                            st.rerun()
+                        except Exception as exc:  # noqa: BLE001
+                            st.error(f"No se pudo importar: {exc}")
+
     grupos = datos.grupos_checklist()
     gmap = {r.descripcion: r.id for r in grupos.itertuples()}
     with st.expander("➕ Agregar ítems", expanded=df.empty):
@@ -2634,6 +2663,3 @@ _tabs = st.tabs([s[0] for s in _secciones])
 for _t, (_, _fn) in zip(_tabs, _secciones):
     with _t:
         _fn()
-
-# --- Pie de página corporativo (banda navy + certificaciones) ---
-_pie_corporativo()

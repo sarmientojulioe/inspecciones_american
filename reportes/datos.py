@@ -1359,6 +1359,50 @@ def quitar_item_checklist(idequipo, hc_pk=None, iditem=None) -> int:
             raise
 
 
+def importar_checklist_desde(idequipo_destino, idequipo_origen) -> int:
+    """Copia el checklist de un tipo de equipo (modelo) a otro.
+
+    Reutiliza los ítems existentes (tabla hojacampo_item): sólo crea las filas
+    de vínculo en hojacampo (grupo→ítem) que el destino todavía no tiene.
+    Si un par grupo/ítem existe pero estaba dado de baja (ACTIVO=0), lo reactiva.
+    Devuelve cuántos pares se agregaron o reactivaron. Solo MySQL.
+    """
+    if db.ENGINE != "mysql":
+        raise RuntimeError("Disponible solo en producción (MySQL).")
+    if str(idequipo_destino) == str(idequipo_origen):
+        raise ValueError("El origen y el destino no pueden ser el mismo tipo.")
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt(
+                "SELECT IDGRUPO, ITEM FROM hojacampo "
+                "WHERE IDEQUIPO=? AND ACTIVO=1"), [idequipo_origen])
+            origen = [(r[0], r[1]) for r in cur.fetchall()]
+            cur.execute(db.adapt(
+                "SELECT IDGRUPO, ITEM, ACTIVO FROM hojacampo WHERE IDEQUIPO=?"),
+                [idequipo_destino])
+            existentes = {(r[0], r[1]): r[2] for r in cur.fetchall()}
+            n = 0
+            for idgrupo, item in origen:
+                estado = existentes.get((idgrupo, item))
+                if estado is None:
+                    _insert_legacy(cur, "hojacampo", {
+                        "IDEQUIPO": idequipo_destino, "IDGRUPO": idgrupo,
+                        "ITEM": item, "ACTIVO": 1})
+                    n += 1
+                elif int(estado or 0) == 0:
+                    cur.execute(db.adapt(
+                        "UPDATE hojacampo SET ACTIVO=1 "
+                        "WHERE IDEQUIPO=? AND IDGRUPO=? AND ITEM=?"),
+                        [idequipo_destino, idgrupo, item])
+                    n += 1
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
 _INS_SOLICITUD = (
     "INSERT INTO solicitud_servicio "
     "(IDSOLICITUD, NUM, FECHA, IDCLIENTE, IDSERVICIO, VTO, ACTIVO, IDUSUARIO, "
