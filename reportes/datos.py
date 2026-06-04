@@ -1753,6 +1753,11 @@ SELECT d.IDSOLICITUDDETALLE AS idd, s.IDSOLICITUD AS idsol, s.ACTIVO AS activo_s
        c.RAZON_SOCIAL AS empresa, c.EMAIL AS email, e.DESCRIPCION AS equipo,
        ip.IDOBLEA AS oblea, ip.MARCA_EQUIPO AS marca, ip.SERIE_EQUIPO AS serie,
        ip.MATRICULA_EQUIPO AS matricula, ip.OBS AS obs, ip.VTO_INSPECCION AS vto,
+       ip.MODELO_EQUIPO AS modelo, ip.ESTRUCTURA_EQUIPO AS estructura,
+       ip.PLUMA_EQUIPO AS pluma, ip.GANCHOSDECARGA AS ganchos, ip.CABINA AS cabina,
+       ip.ESTACION_CONTROL AS estacion, ip.CHASIS AS chasis, ip.anio_fabrica AS anio,
+       ip.torre AS torre, ip.CAPAC_MAX_ELEVA AS capac,
+       ip.long_max_torre AS long_torre, ip.LONG_MAX_PLUMA AS long_pluma,
        ip.IDRESULTADO AS idresultado, tr.DESCRIPCION AS estado,
        ip.IDUSUARIO AS idinspector, u.NOMBRE AS inspector
 FROM solicitud_servicio s
@@ -1771,6 +1776,10 @@ _SQL_EDICION = _SQL_EDICION_BASE + " AND s.FECHA BETWEEN ? AND ? ORDER BY s.FECH
 def _post_edicion(df: pd.DataFrame) -> pd.DataFrame:
     df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
     df["vto"] = pd.to_datetime(df["vto"], errors="coerce")
+    # Campos numéricos del cuadro de características (vienen como Decimal/objeto)
+    for col in ("anio", "torre", "capac", "long_torre", "long_pluma"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     for col in df.select_dtypes("object").columns:
         df[col] = df[col].astype("string").str.strip()
     return df
@@ -1832,6 +1841,36 @@ def actualizar_informes(cambios: list[dict], dry_run: bool = False) -> int:
                 conn.rollback()
             else:
                 conn.commit()
+            return afectadas
+        except Exception:
+            conn.rollback()
+            raise
+
+
+_UPD_CARACT = (
+    "UPDATE informe_preliminar SET MODELO_EQUIPO=?, ESTRUCTURA_EQUIPO=?, "
+    "PLUMA_EQUIPO=?, GANCHOSDECARGA=?, CABINA=?, ESTACION_CONTROL=?, CHASIS=?, "
+    "anio_fabrica=?, torre=?, CAPAC_MAX_ELEVA=?, long_max_torre=?, LONG_MAX_PLUMA=?, "
+    "fecha_ultima_actualizacion=? WHERE IDSOLICITUDDETALLE=?")
+
+
+def actualizar_caracteristicas(cambios: list[dict], dry_run: bool = False) -> int:
+    """Actualiza el cuadro de características del equipo en informe_preliminar
+    (modelo, estructura, pluma, ganchos, cabina, estación, chasis, año, torre,
+    capacidad, long. torre, long. pluma). Cada cambio: {idd, ...}. PRODUCCION."""
+    hoy = dt.date.today()
+    afectadas = 0
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            for c in cambios:
+                cur.execute(db.adapt(_UPD_CARACT), [
+                    c.get("modelo"), c.get("estructura"), c.get("pluma"),
+                    c.get("ganchos"), c.get("cabina"), c.get("estacion"),
+                    c.get("chasis"), c.get("anio"), c.get("torre"), c.get("capac"),
+                    c.get("long_torre"), c.get("long_pluma"), hoy, c["idd"]])
+                afectadas += cur.rowcount
+            conn.rollback() if dry_run else conn.commit()
             return afectadas
         except Exception:
             conn.rollback()

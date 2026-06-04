@@ -1267,6 +1267,18 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
         "Estado": f["estado"].fillna("").values,
         "Inspector": f["inspector"].fillna("").values,
         "Presenció pruebas": [testigos.get(int(i), "") for i in f["idd"].values],
+        "Modelo": f["modelo"].fillna("").values,
+        "Estructura": f["estructura"].fillna("").values,
+        "Pluma": f["pluma"].fillna("").values,
+        "Torre": f["torre"].values,
+        "Ganchos": f["ganchos"].fillna("").values,
+        "Cabina": f["cabina"].fillna("").values,
+        "Capacidad": f["capac"].values,
+        "Estación": f["estacion"].fillna("").values,
+        "Chasis": f["chasis"].fillna("").values,
+        "L. Torre": f["long_torre"].values,
+        "L. Pluma": f["long_pluma"].values,
+        "Año": f["anio"].values,
         "Observaciones": f["obs"].fillna("").values,
     })
     original = ed.copy()
@@ -1275,7 +1287,10 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
         ed, hide_index=True, use_container_width=True, key="editor_insp",
         column_order=["Nº", "Activa", "Fecha", "Empresa", "Equipo", "Oblea", "Marca",
                       "N° Serie", "Matrícula", "Vto. inspección", "Estado",
-                      "Inspector", "Presenció pruebas", "Observaciones"],
+                      "Inspector", "Presenció pruebas",
+                      "Modelo", "Estructura", "Pluma", "Torre", "Ganchos", "Cabina",
+                      "Capacidad", "Estación", "Chasis", "L. Torre", "L. Pluma", "Año",
+                      "Observaciones"],
         column_config={
             "Nº": st.column_config.NumberColumn(disabled=True, format="%d"),
             "Activa": st.column_config.CheckboxColumn(
@@ -1293,6 +1308,15 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
             "Presenció pruebas": st.column_config.TextColumn(
                 help=f"Quién presenció las pruebas (sale en el informe). "
                      f"Vacío = usa el valor por defecto ({cfg.TESTIGO_PRUEBAS})."),
+            "Torre": st.column_config.NumberColumn(format="%.2f", min_value=0.0),
+            "Capacidad": st.column_config.NumberColumn(
+                format="%.2f", min_value=0.0, help="Capacidad máx. de elevación (Kg)"),
+            "L. Torre": st.column_config.NumberColumn(
+                format="%.2f", min_value=0.0, help="Longitud máx. de torre (Mts)"),
+            "L. Pluma": st.column_config.NumberColumn(
+                format="%.2f", min_value=0.0, help="Longitud máx. de pluma (Mts)"),
+            "Año": st.column_config.NumberColumn(
+                format="%d", min_value=0, max_value=2100, help="Año de fabricación"),
             "Observaciones": st.column_config.TextColumn(width="large"),
         })
 
@@ -1337,10 +1361,31 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
             if str(nue["Presenció pruebas"]).strip() != str(vie["Presenció pruebas"]).strip():
                 cambios_testigo.append({"idd": int(nue["idd"]),
                                         "testigo": str(nue["Presenció pruebas"]).strip()})
+        # Características del equipo (cuadro del informe)
+        caract_txt = {"Modelo": "modelo", "Estructura": "estructura", "Pluma": "pluma",
+                      "Ganchos": "ganchos", "Cabina": "cabina", "Estación": "estacion",
+                      "Chasis": "chasis"}
+        caract_num = {"Torre": "torre", "Capacidad": "capac", "L. Torre": "long_torre",
+                      "L. Pluma": "long_pluma", "Año": "anio"}
+        cambios_caract = []
+        for i in range(len(edited)):
+            nue, vie = edited.iloc[i], original.iloc[i]
+            if any(_cambio(nue[c], vie[c]) for c in (*caract_txt, *caract_num)):
+                d = {"idd": int(nue["idd"])}
+                for col, key in caract_txt.items():
+                    d[key] = _norm(nue[col])
+                for col, key in caract_num.items():
+                    v = nue[col]
+                    if v is None or pd.isna(v):
+                        d[key] = None
+                    else:
+                        d[key] = int(v) if key == "anio" else float(v)
+                cambios_caract.append(d)
         obleas = [c["oblea"] for c in cambios if c.get("oblea")]
         dup_lote = [o for o, k in Counter(obleas).items() if k > 1]
         en_uso = datos.obleas_en_uso(obleas, [c["idd"] for c in cambios])
-        if not (cambios or cambios_activo or cambios_cab or cambios_eq or cambios_testigo):
+        if not (cambios or cambios_activo or cambios_cab or cambios_eq or cambios_testigo
+                or cambios_caract):
             st.info("No hay cambios para guardar.")
         elif dup_lote:
             st.error("Oblea repetida en esta misma edición: " + ", ".join(dup_lote))
@@ -1358,6 +1403,8 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
                     datos.actualizar_equipos_detalle(cambios_eq)
                 if cambios_testigo:
                     datos.guardar_testigos(cambios_testigo)
+                if cambios_caract:
+                    datos.actualizar_caracteristicas(cambios_caract)
                 for idsol, act in cambios_activo.items():
                     datos.set_activo_inspeccion(idsol, act)
                 st.cache_data.clear()  # refresca datos y PDFs con lo recién guardado
@@ -1368,6 +1415,8 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
                     msg += f" Tipo de equipo en {len(cambios_eq)} fila(s)."
                 if cambios_testigo:
                     msg += f" Testigo de pruebas en {len(cambios_testigo)} fila(s)."
+                if cambios_caract:
+                    msg += f" Características en {len(cambios_caract)} fila(s)."
                 if cambios_activo:
                     msg += f" Estado cambiado en {len(cambios_activo)} inspección(es)."
                 st.success(msg)
@@ -1507,6 +1556,18 @@ def _ficha_inspeccion(row, pfx: str = "f") -> None:
             pass
         return str(v).strip()
 
+    def gnum(k):  # getter numérico: 0.0 si NA/None
+        v = row[k] if k in row.index else None
+        try:
+            if pd.isna(v):
+                return 0.0
+        except (TypeError, ValueError):
+            pass
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
     st.markdown(f"### Ficha — Inspección Nº {num}")
     i1, i2, i3 = st.columns(3)
     i1.write(f"**Fecha:** {fecha_txt}")
@@ -1554,6 +1615,31 @@ def _ficha_inspeccion(row, pfx: str = "f") -> None:
                 "Presenció las pruebas", value=datos.testigo_de(idd) or "",
                 key=f"test_{pfx}_{idd}",
                 help=f"Sale en el informe. Vacío = valor por defecto ({cfg.TESTIGO_PRUEBAS}).")
+            st.markdown("**Características del equipo** (salen en el cuadro del informe)")
+            cc1, cc2, cc3 = st.columns(3)
+            modelo = cc1.text_input("Modelo", value=g("modelo"), key=f"mod_{pfx}_{idd}")
+            estructura = cc2.text_input("Estructura", value=g("estructura"),
+                                        key=f"estru_{pfx}_{idd}")
+            pluma = cc3.text_input("Pluma", value=g("pluma"), key=f"plu_{pfx}_{idd}")
+            cc4, cc5, cc6 = st.columns(3)
+            ganchos = cc4.text_input("Ganchos de carga", value=g("ganchos"),
+                                     key=f"gan_{pfx}_{idd}")
+            cabina = cc5.text_input("Cabina", value=g("cabina"), key=f"cab_{pfx}_{idd}")
+            estacion = cc6.text_input("Estación de control", value=g("estacion"),
+                                      key=f"esc_{pfx}_{idd}")
+            cc7, cc8, cc9 = st.columns(3)
+            chasis = cc7.text_input("Nº de chasis", value=g("chasis"), key=f"cha_{pfx}_{idd}")
+            anio = cc8.number_input("Año de fabricación", min_value=0, max_value=2100,
+                                    step=1, value=int(gnum("anio")), key=f"ani_{pfx}_{idd}")
+            capac = cc9.number_input("Capac. máx. elev. (Kg)", min_value=0.0, step=10.0,
+                                     value=gnum("capac"), key=f"cap_{pfx}_{idd}")
+            cc10, cc11, cc12 = st.columns(3)
+            torre = cc10.number_input("Torre", min_value=0.0, step=0.1,
+                                      value=gnum("torre"), key=f"tor_{pfx}_{idd}")
+            long_torre = cc11.number_input("Long. máx. torre (Mts)", min_value=0.0, step=0.1,
+                                           value=gnum("long_torre"), key=f"lto_{pfx}_{idd}")
+            long_pluma = cc12.number_input("Long. máx. pluma (Mts)", min_value=0.0, step=0.1,
+                                           value=gnum("long_pluma"), key=f"lpl_{pfx}_{idd}")
             obs = st.text_area("Observaciones", value=g("obs"), key=f"obs_{pfx}_{idd}")
             confirmar = st.checkbox("Confirmo guardar los cambios en la base de producción",
                                     key=f"conf_{pfx}_{idd}")
@@ -1579,6 +1665,12 @@ def _ficha_inspeccion(row, pfx: str = "f") -> None:
                     try:
                         datos.actualizar_informes([cambio], dry_run=False)
                         datos.guardar_testigos([{"idd": idd, "testigo": testigo}])
+                        datos.actualizar_caracteristicas([dict(
+                            idd=idd, modelo=_norm(modelo), estructura=_norm(estructura),
+                            pluma=_norm(pluma), ganchos=_norm(ganchos), cabina=_norm(cabina),
+                            estacion=_norm(estacion), chasis=_norm(chasis),
+                            anio=int(anio) or None, capac=float(capac), torre=float(torre),
+                            long_torre=float(long_torre), long_pluma=float(long_pluma))])
                         st.cache_data.clear()
                         st.success("Cambios guardados.")
                         st.rerun()
