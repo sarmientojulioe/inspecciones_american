@@ -1217,27 +1217,34 @@ def _notnull_defaults(cur, tabla: str, ya: dict) -> dict:
     return out
 
 
-def _insert_legacy(cur, tabla: str, valores: dict):
-    """INSERT genérico: agrega defaults NOT NULL y devuelve el id (PK numérica o lastrowid)."""
+def _insert_legacy(cur, tabla: str, valores: dict, id_col: str | None = None):
+    """INSERT genérico: agrega defaults NOT NULL y devuelve el id.
+
+    `id_col` permite indicar la columna id cuando la tabla migrada no tiene un
+    PRIMARY KEY declarado (caso de varias tablas legacy en MySQL). Si no se pasa
+    y hay una PK simple, se usa esa. Si la columna no es auto_increment y no
+    viene en `valores`, se genera con MAX(id)+1.
+    """
     pks = _pk_columns(cur, tabla)
+    col_id = id_col or (pks[0] if len(pks) == 1 else None)
     id_generado = None
-    if len(pks) == 1 and not _is_auto(cur, tabla, pks[0]) and pks[0].upper() not in {
+    if col_id and not _is_auto(cur, tabla, col_id) and col_id.upper() not in {
             k.upper() for k in valores}:
-        id_generado = _next_int_id(cur, tabla, pks[0])
-        valores[pks[0]] = id_generado
+        id_generado = _next_int_id(cur, tabla, col_id)
+        valores[col_id] = id_generado
     valores.update(_notnull_defaults(cur, tabla, valores))
     cols = list(valores)
     ph = ",".join(["?"] * len(cols))
     cur.execute(db.adapt(f"INSERT INTO {tabla} ({','.join(cols)}) VALUES ({ph})"),
                 [valores[c] for c in cols])
-    if id_generado is None:
-        id_generado = pks and valores.get(pks[0])
-        if id_generado is None:
-            try:
-                id_generado = cur.lastrowid
-            except Exception:  # noqa: BLE001
-                id_generado = None
-    return id_generado
+    if id_generado is not None:
+        return id_generado
+    if col_id and valores.get(col_id) is not None:
+        return valores[col_id]
+    try:
+        return cur.lastrowid
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _hojacampo_pk() -> str | None:
@@ -1279,7 +1286,8 @@ def agregar_grupo_checklist(descripcion: str):
     with db.get_connection() as conn:
         cur = conn.cursor()
         try:
-            idg = _insert_legacy(cur, "hojacampo_grupo", {"DESCRIPCION": descripcion})
+            idg = _insert_legacy(cur, "hojacampo_grupo", {"DESCRIPCION": descripcion},
+                                 id_col="IDGRUPO")
             conn.commit()
             return idg
         except Exception:
@@ -1294,7 +1302,8 @@ def agregar_item_checklist(idequipo, idgrupo, descripcion: str):
     with db.get_connection() as conn:
         cur = conn.cursor()
         try:
-            iditem = _insert_legacy(cur, "hojacampo_item", {"descripcion": descripcion})
+            iditem = _insert_legacy(cur, "hojacampo_item", {"descripcion": descripcion},
+                                    id_col="iditem")
             _insert_legacy(cur, "hojacampo", {
                 "IDEQUIPO": idequipo, "IDGRUPO": idgrupo,
                 "ITEM": iditem, "ACTIVO": 1})
@@ -1317,7 +1326,8 @@ def agregar_items_checklist(idequipo, idgrupo, descripciones) -> int:
         cur = conn.cursor()
         try:
             for desc in descripciones:
-                iditem = _insert_legacy(cur, "hojacampo_item", {"descripcion": desc})
+                iditem = _insert_legacy(cur, "hojacampo_item", {"descripcion": desc},
+                                        id_col="iditem")
                 _insert_legacy(cur, "hojacampo", {
                     "IDEQUIPO": idequipo, "IDGRUPO": idgrupo,
                     "ITEM": iditem, "ACTIVO": 1})
