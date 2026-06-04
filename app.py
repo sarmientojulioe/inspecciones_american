@@ -2348,7 +2348,9 @@ def render_catalogos() -> None:
         ed = pd.DataFrame({"id": df["id"].values,
                            "Nombre": df["nombre"].fillna("").values,
                            "Activo": (df["activo"] == 1).values}) if not df.empty \
-            else pd.DataFrame({"id": [], "Nombre": [], "Activo": []})
+            else pd.DataFrame({"id": pd.Series(dtype="Int64"),
+                               "Nombre": pd.Series(dtype="string"),
+                               "Activo": pd.Series(dtype="bool")})
         orig = ed.copy()
         out = st.data_editor(ed, hide_index=True, use_container_width=True,
                              key="cat_tipo_ed", column_order=["Nombre", "Activo"],
@@ -2383,7 +2385,10 @@ def render_catalogos() -> None:
                          for x in df["id_tipo"].values],
                 "Nombre": df["nombre"].fillna("").values,
                 "Activo": (df["activo"] == 1).values}) if not df.empty \
-                else pd.DataFrame({"id": [], "Tipo": [], "Nombre": [], "Activo": []})
+                else pd.DataFrame({"id": pd.Series(dtype="Int64"),
+                                   "Tipo": pd.Series(dtype="string"),
+                                   "Nombre": pd.Series(dtype="string"),
+                                   "Activo": pd.Series(dtype="bool")})
             orig = ed.copy()
             out = st.data_editor(
                 ed, hide_index=True, use_container_width=True, key="cat_equipo_ed",
@@ -2420,7 +2425,10 @@ def render_catalogos() -> None:
                            "Valor": df["valor"].fillna("").values,
                            "Unidad": df["unidad"].fillna("").values,
                            "Activo": (df["activo"] == 1).values}) if not df.empty \
-            else pd.DataFrame({"id": [], "Valor": [], "Unidad": [], "Activo": []})
+            else pd.DataFrame({"id": pd.Series(dtype="Int64"),
+                               "Valor": pd.Series(dtype="string"),
+                               "Unidad": pd.Series(dtype="string"),
+                               "Activo": pd.Series(dtype="bool")})
         orig = ed.copy()
         out = st.data_editor(ed, hide_index=True, use_container_width=True,
                              key="cat_cap_ed", column_order=["Valor", "Unidad", "Activo"],
@@ -2451,7 +2459,10 @@ def render_catalogos() -> None:
                            "Código": df["codigo"].fillna("").values,
                            "Descripción": df["descripcion"].fillna("").values,
                            "Activo": (df["activo"] == 1).values}) if not df.empty \
-            else pd.DataFrame({"id": [], "Código": [], "Descripción": [], "Activo": []})
+            else pd.DataFrame({"id": pd.Series(dtype="Int64"),
+                               "Código": pd.Series(dtype="string"),
+                               "Descripción": pd.Series(dtype="string"),
+                               "Activo": pd.Series(dtype="bool")})
         orig = ed.copy()
         out = st.data_editor(ed, hide_index=True, use_container_width=True,
                              key="cat_norma_ed", column_order=["Código", "Descripción", "Activo"],
