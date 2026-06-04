@@ -12,3 +12,5 @@ venv/
 .token
 .token.txt
 *.token
+.openai
+.openai.txt

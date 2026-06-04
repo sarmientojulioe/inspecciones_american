@@ -19,7 +19,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import db
-from reportes import certificados, correo, datos, plantillas_config as cfg
+from reportes import asistente, certificados, correo, datos, plantillas_config as cfg
 from reportes.excel import df_to_excel
 from reportes.pdf import df_to_pdf
 
@@ -3384,6 +3384,51 @@ except Exception as exc:  # noqa: BLE001
     st.error(f"No se pudo conectar a la base: {exc}")
     st.stop()
 
+def render_asistente_flotante() -> None:
+    """Asistente flotante (botón 💬 fijo) disponible en todo el sitio. Responde
+    solo sobre el uso del sistema y la norma ISO/IEC 17020."""
+    if not asistente.disponible():
+        return  # sin OPENAI_API_KEY no se muestra
+    st.markdown(
+        """
+        <style>
+        [data-testid="stPopover"] { position: fixed; bottom: 1.1rem; right: 1.1rem;
+            z-index: 1000; }
+        [data-testid="stPopover"] > button { border-radius: 2rem; box-shadow:
+            0 2px 8px rgba(0,0,0,0.25); }
+        </style>
+        """, unsafe_allow_html=True)
+    with st.popover("💬 Asistente", use_container_width=False):
+        st.markdown("**Asistente** — uso del sistema e **ISO/IEC 17020**")
+        st.caption("Respondo solo sobre estos temas.")
+        hist = st.session_state.setdefault("asis_hist", [])
+        caja = st.container(height=320)
+        if not hist:
+            caja.caption("Hacé tu consulta. Ej: «¿Cómo cargo una inspección con varios "
+                         "equipos?» o «¿Qué exige ISO/IEC 17020 sobre imparcialidad?»")
+        for m in hist:
+            caja.chat_message(m["role"]).markdown(m["content"])
+        with st.form("asis_form", clear_on_submit=True):
+            q = st.text_input("Consulta", label_visibility="collapsed",
+                              placeholder="Escribí tu consulta…")
+            cc1, cc2 = st.columns([1, 1])
+            enviar = cc1.form_submit_button("Enviar", type="primary",
+                                            use_container_width=True)
+            limpiar = cc2.form_submit_button("Limpiar", use_container_width=True)
+        if limpiar:
+            st.session_state["asis_hist"] = []
+            st.rerun()
+        if enviar and _norm(q):
+            hist.append({"role": "user", "content": q.strip()})
+            try:
+                with st.spinner("Pensando…"):
+                    resp = asistente.responder(hist)
+            except Exception as exc:  # noqa: BLE001
+                resp = f"No pude responder: {exc}"
+            hist.append({"role": "assistant", "content": resp})
+            st.rerun()
+
+
 # Pestañas según el rol del usuario (ver ROLES / permisos)
 _secciones = [
     ("Dashboard", lambda: render_inspecciones(MIN_F, MAX_F)),
@@ -3398,3 +3443,6 @@ _tabs = st.tabs([s[0] for s in _secciones])
 for _t, (_, _fn) in zip(_tabs, _secciones):
     with _t:
         _fn()
+
+# Asistente flotante (💬) disponible en todas las pestañas
+render_asistente_flotante()
