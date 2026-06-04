@@ -254,7 +254,8 @@ def _preliminar_story(d, fotos: list | None = None, titulo_sufijo: str = "",
 
     e.append(Spacer(1, 0.4 * cm))
     e.append(Paragraph(f"2) Que el resultado de la inspección es : &nbsp;&nbsp;<b>{_txt(d['resultado'])}</b>", NORMAL))
-    e.append(Paragraph(f"3) Que ha presenciado las pruebas : &nbsp;&nbsp;<b>{cfg.TESTIGO_PRUEBAS}</b>", NORMAL))
+    _testigo = (_txt(d["testigo"]) if "testigo" in d.index else "") or cfg.TESTIGO_PRUEBAS
+    e.append(Paragraph(f"3) Que ha presenciado las pruebas : &nbsp;&nbsp;<b>{_testigo}</b>", NORMAL))
     e.append(Spacer(1, 0.2 * cm))
 
     rec = Table([[Paragraph(

@@ -156,7 +156,8 @@ def _puede_admin_usuarios() -> bool:
 def _init_esquema():
     """Crea tablas de fotos/leyendas y la columna rol si faltan (una vez por proceso)."""
     for fn in (datos.asegurar_esquema_fotos, datos.asegurar_esquema_roles,
-               datos.asegurar_esquema_empresas, datos.asegurar_esquema_kpi):
+               datos.asegurar_esquema_empresas, datos.asegurar_esquema_kpi,
+               datos.asegurar_esquema_tipologia, datos.asegurar_esquema_testigo):
         try:
             fn()
         except Exception:  # noqa: BLE001
@@ -306,6 +307,52 @@ def cat_equipos() -> pd.DataFrame:
 @st.cache_data(ttl=120)
 def cat_tipos_admin() -> pd.DataFrame:
     return datos.tipos_equipo_admin()
+
+
+@st.cache_data(ttl=120)
+def cat_tipo() -> pd.DataFrame:
+    return datos.cat_tipo_lista()
+
+
+@st.cache_data(ttl=120)
+def cat_equipo(id_tipo=None) -> pd.DataFrame:
+    return datos.cat_equipo_lista(id_tipo)
+
+
+@st.cache_data(ttl=120)
+def cat_capacidad() -> pd.DataFrame:
+    return datos.cat_capacidad_lista()
+
+
+@st.cache_data(ttl=120)
+def cat_norma() -> pd.DataFrame:
+    return datos.cat_norma_lista()
+
+
+def _opts_equipo() -> tuple[dict, dict]:
+    """(id->etiqueta, etiqueta->id) de equipos del catálogo, con su tipo."""
+    df = cat_equipo()
+    id2 = {int(r.id): f"{fmt(r.tipo) if pd.notna(r.tipo) else '—'} / {fmt(r.nombre)}"
+           for r in df.itertuples()}
+    return id2, {v: k for k, v in id2.items()}
+
+
+def _opts_capacidad() -> tuple[dict, dict]:
+    df = cat_capacidad()
+    id2 = {}
+    for r in df.itertuples():
+        uni = fmt(r.unidad) if pd.notna(r.unidad) else ""
+        id2[int(r.id)] = (f"{fmt(r.valor)} {uni}".strip())
+    return id2, {v: k for k, v in id2.items()}
+
+
+def _opts_norma() -> tuple[dict, dict]:
+    df = cat_norma()
+    id2 = {}
+    for r in df.itertuples():
+        des = fmt(r.descripcion) if pd.notna(r.descripcion) else ""
+        id2[int(r.id)] = f"{fmt(r.codigo)} — {des}" if des else fmt(r.codigo)
+    return id2, {v: k for k, v in id2.items()}
 
 
 @st.cache_data(ttl=3600)
@@ -1187,12 +1234,29 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
     name2id = {r.nombre: r.id for r in usuarios.itertuples()}
     insp_opts = [""] + list(usuarios["nombre"])
 
+    # Empresa y Equipo: listas para los desplegables (catálogo + valores presentes)
+    clientes_cat, equipos_cat = cat_clientes(), cat_equipos()
+    cli2id = {r.nombre: r.id for r in clientes_cat.itertuples()}
+    eq2id = {r.nombre: r.id for r in equipos_cat.itertuples()}
+    emp_opts = list(cli2id)
+    for n in f["empresa"].dropna().unique():
+        if n not in cli2id:
+            emp_opts.append(n)  # nombre legacy fuera del catálogo: se muestra pero no se cambia
+    equipo_opts = list(eq2id)
+    for n in f["equipo"].dropna().unique():
+        if n and n not in eq2id:
+            equipo_opts.append(n)
+
+    # "Que ha presenciado las pruebas": guardado por inspección; si está vacío,
+    # el informe usa el valor por defecto (cfg.TESTIGO_PRUEBAS).
+    testigos = datos.testigos_de(f["idd"].tolist())
+
     ed = pd.DataFrame({
         "idd": f["idd"].values,
         "idsol": f["idsol"].values,
         "Nº": f["num"].values,
         "Activa": (f["activo_sol"] == 1).values,
-        "Fecha": f["fecha"].dt.strftime("%d/%m/%Y").values,
+        "Fecha": f["fecha"].dt.date.values,
         "Empresa": f["empresa"].fillna("").values,
         "Equipo": f["equipo"].fillna("").values,
         "Oblea": f["oblea"].fillna("").values,
@@ -1202,6 +1266,7 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
         "Vto. inspección": f["vto"].dt.date.values,
         "Estado": f["estado"].fillna("").values,
         "Inspector": f["inspector"].fillna("").values,
+        "Presenció pruebas": [testigos.get(int(i), "") for i in f["idd"].values],
         "Observaciones": f["obs"].fillna("").values,
     })
     original = ed.copy()
@@ -1210,17 +1275,24 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
         ed, hide_index=True, use_container_width=True, key="editor_insp",
         column_order=["Nº", "Activa", "Fecha", "Empresa", "Equipo", "Oblea", "Marca",
                       "N° Serie", "Matrícula", "Vto. inspección", "Estado",
-                      "Inspector", "Observaciones"],
+                      "Inspector", "Presenció pruebas", "Observaciones"],
         column_config={
             "Nº": st.column_config.NumberColumn(disabled=True, format="%d"),
             "Activa": st.column_config.CheckboxColumn(
                 help="Destildá para anular la inspección (baja lógica)"),
-            "Fecha": st.column_config.TextColumn(disabled=True),
-            "Empresa": st.column_config.TextColumn(disabled=True),
-            "Equipo": st.column_config.TextColumn(disabled=True),
+            "Fecha": st.column_config.DateColumn(format="DD/MM/YYYY"),
+            "Empresa": st.column_config.SelectboxColumn(
+                options=emp_opts, required=True,
+                help="Cambia la empresa de TODA la inspección (todos sus equipos)"),
+            "Equipo": st.column_config.SelectboxColumn(
+                options=equipo_opts,
+                help="Tipo de equipo de esta fila"),
             "Vto. inspección": st.column_config.DateColumn(format="DD/MM/YYYY"),
             "Estado": st.column_config.SelectboxColumn(options=estado_opts, required=True),
             "Inspector": st.column_config.SelectboxColumn(options=insp_opts),
+            "Presenció pruebas": st.column_config.TextColumn(
+                help=f"Quién presenció las pruebas (sale en el informe). "
+                     f"Vacío = usa el valor por defecto ({cfg.TESTIGO_PRUEBAS})."),
             "Observaciones": st.column_config.TextColumn(width="large"),
         })
 
@@ -1245,10 +1317,30 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
             if bool(edited.iloc[i]["Activa"]) != bool(original.iloc[i]["Activa"]):
                 cambios_activo[int(edited.iloc[i]["idsol"])] = \
                     1 if bool(edited.iloc[i]["Activa"]) else 0
+        # Cabecera (Fecha / Empresa) por inspección y Equipo (tipo) por fila
+        cambios_cab, cambios_eq = {}, []
+        for i in range(len(edited)):
+            nue, vie = edited.iloc[i], original.iloc[i]
+            idsol = int(nue["idsol"])
+            f_new, f_old = nue["Fecha"], vie["Fecha"]
+            if _cambio(f_new, f_old) and not (f_new is None or pd.isna(f_new)):
+                cambios_cab.setdefault(idsol, {"idsol": idsol})["fecha"] = f_new
+            emp_new = str(nue["Empresa"]).strip()
+            if emp_new != str(vie["Empresa"]).strip() and emp_new in cli2id:
+                cambios_cab.setdefault(idsol, {"idsol": idsol})["idcliente"] = cli2id[emp_new]
+            eq_new = str(nue["Equipo"]).strip()
+            if eq_new != str(vie["Equipo"]).strip() and eq_new in eq2id:
+                cambios_eq.append({"idd": int(nue["idd"]), "idequipo": eq2id[eq_new]})
+        cambios_testigo = []
+        for i in range(len(edited)):
+            nue, vie = edited.iloc[i], original.iloc[i]
+            if str(nue["Presenció pruebas"]).strip() != str(vie["Presenció pruebas"]).strip():
+                cambios_testigo.append({"idd": int(nue["idd"]),
+                                        "testigo": str(nue["Presenció pruebas"]).strip()})
         obleas = [c["oblea"] for c in cambios if c.get("oblea")]
         dup_lote = [o for o, k in Counter(obleas).items() if k > 1]
         en_uso = datos.obleas_en_uso(obleas, [c["idd"] for c in cambios])
-        if not cambios and not cambios_activo:
+        if not (cambios or cambios_activo or cambios_cab or cambios_eq or cambios_testigo):
             st.info("No hay cambios para guardar.")
         elif dup_lote:
             st.error("Oblea repetida en esta misma edición: " + ", ".join(dup_lote))
@@ -1260,10 +1352,22 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
         else:
             try:
                 n = datos.actualizar_informes(cambios, dry_run=False) if cambios else 0
+                if cambios_cab:
+                    datos.actualizar_cabeceras(list(cambios_cab.values()))
+                if cambios_eq:
+                    datos.actualizar_equipos_detalle(cambios_eq)
+                if cambios_testigo:
+                    datos.guardar_testigos(cambios_testigo)
                 for idsol, act in cambios_activo.items():
                     datos.set_activo_inspeccion(idsol, act)
                 st.cache_data.clear()  # refresca datos y PDFs con lo recién guardado
                 msg = f"{n} fila(s) de datos actualizada(s)."
+                if cambios_cab:
+                    msg += f" Fecha/empresa en {len(cambios_cab)} inspección(es)."
+                if cambios_eq:
+                    msg += f" Tipo de equipo en {len(cambios_eq)} fila(s)."
+                if cambios_testigo:
+                    msg += f" Testigo de pruebas en {len(cambios_testigo)} fila(s)."
                 if cambios_activo:
                     msg += f" Estado cambiado en {len(cambios_activo)} inspección(es)."
                 st.success(msg)
@@ -1446,6 +1550,10 @@ def _ficha_inspeccion(row, pfx: str = "f") -> None:
             vto_default = row["vto"].date() if pd.notna(row["vto"]) else None
             vto = st.date_input("Vto. inspección", value=vto_default, format="DD/MM/YYYY",
                                 key=f"vto_{pfx}_{idd}")
+            testigo = st.text_input(
+                "Presenció las pruebas", value=datos.testigo_de(idd) or "",
+                key=f"test_{pfx}_{idd}",
+                help=f"Sale en el informe. Vacío = valor por defecto ({cfg.TESTIGO_PRUEBAS}).")
             obs = st.text_area("Observaciones", value=g("obs"), key=f"obs_{pfx}_{idd}")
             confirmar = st.checkbox("Confirmo guardar los cambios en la base de producción",
                                     key=f"conf_{pfx}_{idd}")
@@ -1470,6 +1578,7 @@ def _ficha_inspeccion(row, pfx: str = "f") -> None:
                 else:
                     try:
                         datos.actualizar_informes([cambio], dry_run=False)
+                        datos.guardar_testigos([{"idd": idd, "testigo": testigo}])
                         st.cache_data.clear()
                         st.success("Cambios guardados.")
                         st.rerun()
@@ -2025,11 +2134,23 @@ def _form_equipo(idcliente, r, tipo_nombres, tipo_map, tipo_por_id,
         tipo_lbl = st.selectbox("Tipo de equipo", tipo_nombres, index=idx_tipo,
                                 key=f"{pref}_tipo")
         idequipo = tipo_map.get(tipo_lbl)
+        cap_id2, _cap_l2id = _opts_capacidad()
+        cap_labels = list(cap_id2.values())
         c1, c2 = st.columns(2)
         marca = c1.text_input("Marca", value="" if nuevo else fmt2(r.marca),
                               key=f"{pref}_marca")
-        capac = c2.text_input("Capacidad", value="" if nuevo else fmt2(r.capacidad),
-                              key=f"{pref}_capac")
+        if cap_labels:
+            actual_cap = "" if nuevo else fmt2(r.capacidad)
+            opts = [""] + cap_labels + (
+                [actual_cap] if actual_cap and actual_cap not in cap_labels else [])
+            capac = c2.selectbox(
+                "Capacidad", opts,
+                index=opts.index(actual_cap) if actual_cap in opts else 0,
+                key=f"{pref}_capac",
+                help="Las opciones salen del catálogo (Datos → Catálogos → Capacidades).")
+        else:
+            capac = c2.text_input("Capacidad", value="" if nuevo else fmt2(r.capacidad),
+                                  key=f"{pref}_capac")
         c3, c4 = st.columns(2)
         modelo = c3.text_input("Modelo", value="" if nuevo else fmt2(r.modelo),
                                key=f"{pref}_modelo")
@@ -2194,6 +2315,169 @@ def render_inspecciones_menu(min_f: dt.date, max_f: dt.date) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Pestaña: Catálogos de tipología (cat_tipo / cat_equipo / cat_capacidad / cat_norma)
+# --------------------------------------------------------------------------- #
+def _guardar_editor(edited, original, campos, actualizar) -> int:
+    """Aplica los cambios de un st.data_editor fila por fila. `actualizar(row)`
+    recibe la fila editada y persiste. Devuelve cuántas filas cambiaron."""
+    n = 0
+    for i in range(len(edited)):
+        nue, vie = edited.iloc[i], original.iloc[i]
+        if any(_cambio(nue[c], vie[c]) for c in campos):
+            actualizar(nue)
+            n += 1
+    return n
+
+
+def render_catalogos() -> None:
+    st.subheader("Catálogos de tipología")
+    if not _puede_admin_usuarios():
+        st.error("No tenés permisos para editar los catálogos.")
+        return
+    if not _es_mysql():
+        st.caption("Los catálogos sólo están disponibles en producción (MySQL).")
+        return
+    st.caption("Catálogos para clasificar los tipos de equipo: Tipo → Equipo, "
+               "Capacidad y Normas.")
+    t_tipos, t_equipos, t_cap, t_norm = st.tabs(
+        ["Tipos", "Equipos", "Capacidades", "Normas"])
+
+    # --- Tipos ---
+    with t_tipos:
+        df = datos.cat_tipo_lista(incluir_inactivos=True)
+        ed = pd.DataFrame({"id": df["id"].values,
+                           "Nombre": df["nombre"].fillna("").values,
+                           "Activo": (df["activo"] == 1).values}) if not df.empty \
+            else pd.DataFrame({"id": [], "Nombre": [], "Activo": []})
+        orig = ed.copy()
+        out = st.data_editor(ed, hide_index=True, use_container_width=True,
+                             key="cat_tipo_ed", column_order=["Nombre", "Activo"],
+                             column_config={"Nombre": st.column_config.TextColumn(required=True),
+                                            "Activo": st.column_config.CheckboxColumn()})
+        if st.button("Guardar tipos", type="primary", key="cat_tipo_save"):
+            n = _guardar_editor(out, orig, ["Nombre", "Activo"], lambda r: datos.actualizar_cat_tipo(
+                r["id"], _norm(r["Nombre"]), bool(r["Activo"])))
+            st.cache_data.clear()
+            st.success(f"{n} tipo(s) actualizado(s)." if n else "Sin cambios.")
+            if n:
+                st.rerun()
+        with st.form("cat_tipo_add", clear_on_submit=True):
+            nom = st.text_input("Nuevo tipo", key="cat_tipo_new")
+            if st.form_submit_button("Agregar tipo") and _norm(nom):
+                datos.agregar_cat_tipo(_norm(nom))
+                st.cache_data.clear()
+                st.rerun()
+
+    # --- Equipos (pertenecen a un tipo) ---
+    with t_equipos:
+        tipos = datos.cat_tipo_lista()
+        tnom = {int(r.id): r.nombre for r in tipos.itertuples()}
+        tid = {r.nombre: int(r.id) for r in tipos.itertuples()}
+        if not tid:
+            st.info("Primero cargá al menos un Tipo en la pestaña «Tipos».")
+        else:
+            df = datos.cat_equipo_lista(incluir_inactivos=True)
+            ed = pd.DataFrame({
+                "id": df["id"].values,
+                "Tipo": [tnom.get(int(x)) if pd.notna(x) else None
+                         for x in df["id_tipo"].values],
+                "Nombre": df["nombre"].fillna("").values,
+                "Activo": (df["activo"] == 1).values}) if not df.empty \
+                else pd.DataFrame({"id": [], "Tipo": [], "Nombre": [], "Activo": []})
+            orig = ed.copy()
+            out = st.data_editor(
+                ed, hide_index=True, use_container_width=True, key="cat_equipo_ed",
+                column_order=["Tipo", "Nombre", "Activo"],
+                column_config={
+                    "Tipo": st.column_config.SelectboxColumn(options=list(tid), required=True),
+                    "Nombre": st.column_config.TextColumn(required=True),
+                    "Activo": st.column_config.CheckboxColumn()})
+            if st.button("Guardar equipos", type="primary", key="cat_equipo_save"):
+                n = _guardar_editor(
+                    out, orig, ["Tipo", "Nombre", "Activo"],
+                    lambda r: datos.actualizar_cat_equipo(
+                        r["id"], tid.get(r["Tipo"]), _norm(r["Nombre"]), bool(r["Activo"])))
+                st.cache_data.clear()
+                st.success(f"{n} equipo(s) actualizado(s)." if n else "Sin cambios.")
+                if n:
+                    st.rerun()
+            with st.form("cat_equipo_add", clear_on_submit=True):
+                c1, c2 = st.columns(2)
+                tsel = c1.selectbox("Tipo", list(tid), index=None, key="cat_eq_tipo")
+                nom = c2.text_input("Nuevo equipo", key="cat_eq_new")
+                if st.form_submit_button("Agregar equipo"):
+                    if tsel and _norm(nom):
+                        datos.agregar_cat_equipo(tid[tsel], _norm(nom))
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.error("Elegí el tipo y escribí el nombre del equipo.")
+
+    # --- Capacidades ---
+    with t_cap:
+        df = datos.cat_capacidad_lista(incluir_inactivos=True)
+        ed = pd.DataFrame({"id": df["id"].values,
+                           "Valor": df["valor"].fillna("").values,
+                           "Unidad": df["unidad"].fillna("").values,
+                           "Activo": (df["activo"] == 1).values}) if not df.empty \
+            else pd.DataFrame({"id": [], "Valor": [], "Unidad": [], "Activo": []})
+        orig = ed.copy()
+        out = st.data_editor(ed, hide_index=True, use_container_width=True,
+                             key="cat_cap_ed", column_order=["Valor", "Unidad", "Activo"],
+                             column_config={"Valor": st.column_config.TextColumn(required=True),
+                                            "Activo": st.column_config.CheckboxColumn()})
+        if st.button("Guardar capacidades", type="primary", key="cat_cap_save"):
+            n = _guardar_editor(out, orig, ["Valor", "Unidad", "Activo"],
+                                lambda r: datos.actualizar_cat_capacidad(
+                                    r["id"], _norm(r["Valor"]), _norm(r["Unidad"]),
+                                    bool(r["Activo"])))
+            st.cache_data.clear()
+            st.success(f"{n} capacidad(es) actualizada(s)." if n else "Sin cambios.")
+            if n:
+                st.rerun()
+        with st.form("cat_cap_add", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            val = c1.text_input("Valor (ej. 50)", key="cat_cap_val")
+            uni = c2.text_input("Unidad (ej. t)", key="cat_cap_uni")
+            if st.form_submit_button("Agregar capacidad") and _norm(val):
+                datos.agregar_cat_capacidad(_norm(val), _norm(uni))
+                st.cache_data.clear()
+                st.rerun()
+
+    # --- Normas ---
+    with t_norm:
+        df = datos.cat_norma_lista(incluir_inactivos=True)
+        ed = pd.DataFrame({"id": df["id"].values,
+                           "Código": df["codigo"].fillna("").values,
+                           "Descripción": df["descripcion"].fillna("").values,
+                           "Activo": (df["activo"] == 1).values}) if not df.empty \
+            else pd.DataFrame({"id": [], "Código": [], "Descripción": [], "Activo": []})
+        orig = ed.copy()
+        out = st.data_editor(ed, hide_index=True, use_container_width=True,
+                             key="cat_norma_ed", column_order=["Código", "Descripción", "Activo"],
+                             column_config={"Código": st.column_config.TextColumn(required=True),
+                                            "Descripción": st.column_config.TextColumn(width="medium"),
+                                            "Activo": st.column_config.CheckboxColumn()})
+        if st.button("Guardar normas", type="primary", key="cat_norma_save"):
+            n = _guardar_editor(out, orig, ["Código", "Descripción", "Activo"],
+                                lambda r: datos.actualizar_cat_norma(
+                                    r["id"], _norm(r["Código"]), _norm(r["Descripción"]),
+                                    bool(r["Activo"])))
+            st.cache_data.clear()
+            st.success(f"{n} norma(s) actualizada(s)." if n else "Sin cambios.")
+            if n:
+                st.rerun()
+        with st.form("cat_norma_add", clear_on_submit=True):
+            c1, c2 = st.columns([1, 2])
+            cod = c1.text_input("Código (ej. IRAM 3920)", key="cat_norma_cod")
+            des = c2.text_input("Descripción", key="cat_norma_des")
+            if st.form_submit_button("Agregar norma") and _norm(cod):
+                datos.agregar_cat_norma(_norm(cod), _norm(des))
+                st.cache_data.clear()
+                st.rerun()
+
+
+# --------------------------------------------------------------------------- #
 # Pestaña: Tipos de equipo (catálogo general — tabla legada `equipos`)
 # --------------------------------------------------------------------------- #
 def render_tipos_equipo() -> None:
@@ -2277,6 +2561,61 @@ def render_tipos_equipo() -> None:
                         st.rerun()
                     except Exception as exc:  # noqa: BLE001
                         st.error(f"No se pudo crear: {exc}")
+
+    st.divider()
+    _clasificar_tipo(cat_tipos_admin())
+
+
+def _clasificar_tipo(todos: pd.DataFrame) -> None:
+    """Clasifica un tipo de equipo (equipos.IDEQUIPO) con Equipo + Capacidad + Normas."""
+    st.markdown("#### Clasificación del tipo (Equipo · Capacidad · Normas)")
+    eq_id2, eq_l2id = _opts_equipo()
+    cap_id2, cap_l2id = _opts_capacidad()
+    nm_id2, nm_l2id = _opts_norma()
+    if not eq_id2 and not cap_id2 and not nm_id2:
+        st.info("Cargá primero los catálogos en la pestaña «Catálogos».")
+        return
+    tmap = {r.descripcion: str(r.id) for r in todos.itertuples()}
+    sel = st.selectbox("Tipo de equipo a clasificar", list(tmap), index=None,
+                       placeholder="Elegí un tipo…", key="clasif_tipo")
+    if not sel:
+        return
+    idequipo = tmap[sel]
+    clasif = datos.clasificaciones_todas()
+    fila = clasif[clasif["idequipo"] == str(idequipo)]
+    cur_eq = int(fila["id_equipo"].iloc[0]) if not fila.empty and pd.notna(
+        fila["id_equipo"].iloc[0]) else None
+    cur_cap = int(fila["id_capacidad"].iloc[0]) if not fila.empty and pd.notna(
+        fila["id_capacidad"].iloc[0]) else None
+    nmt = datos.normas_todas()
+    cur_norm = [int(x) for x in nmt[nmt["idequipo"] == str(idequipo)]["id_norma"].tolist()]
+
+    with st.form("clasif_form"):
+        eq_lbls = list(eq_l2id)
+        cap_lbls = list(cap_l2id)
+        nm_lbls = list(nm_l2id)
+        eq_sel = st.selectbox(
+            "Equipo", eq_lbls,
+            index=eq_lbls.index(eq_id2[cur_eq]) if cur_eq in eq_id2 else None,
+            placeholder="Elegí el equipo…", key="clasif_eq")
+        cap_sel = st.selectbox(
+            "Capacidad", cap_lbls,
+            index=cap_lbls.index(cap_id2[cur_cap]) if cur_cap in cap_id2 else None,
+            placeholder="Elegí la capacidad…", key="clasif_cap")
+        nm_sel = st.multiselect(
+            "Normas que aplican",
+            nm_lbls, default=[nm_id2[i] for i in cur_norm if i in nm_id2],
+            key="clasif_norm")
+        if st.form_submit_button("Guardar clasificación", type="primary"):
+            try:
+                datos.guardar_clasificacion(
+                    idequipo, eq_l2id.get(eq_sel), cap_l2id.get(cap_sel))
+                datos.guardar_normas(idequipo, [nm_l2id[x] for x in nm_sel])
+                st.cache_data.clear()
+                st.success("Clasificación guardada.")
+                st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"No se pudo guardar: {exc}")
 
 
 def render_checklist() -> None:
@@ -2373,12 +2712,64 @@ def render_checklist() -> None:
 # --------------------------------------------------------------------------- #
 # Pestaña: Datos (agrupa Equipos, Usuarios, Empresas, Tipos y KPI en sub-pestañas)
 # --------------------------------------------------------------------------- #
+def render_leyendas() -> None:
+    """Banco de leyendas para las fotos del Informe Preliminar."""
+    st.subheader("Banco de leyendas de fotos")
+    if not _puede_admin_usuarios():
+        st.error("No tenés permisos para editar las leyendas.")
+        return
+    if not _es_mysql():
+        st.caption("Las leyendas sólo están disponibles en producción (MySQL).")
+        return
+    st.caption("Estas leyendas aparecen en el desplegable **Leyenda** debajo de cada "
+               "foto del Informe Preliminar. Cargá acá las que uses seguido para "
+               "elegirlas con un clic al cargar fotos.")
+
+    leyendas = cat_leyendas()
+    if leyendas:
+        ed = pd.DataFrame({"Leyenda": leyendas, "Borrar": [False] * len(leyendas)})
+        out = st.data_editor(
+            ed, hide_index=True, use_container_width=True, key="ley_ed",
+            column_order=["Leyenda", "Borrar"],
+            column_config={
+                "Leyenda": st.column_config.TextColumn(disabled=True),
+                "Borrar": st.column_config.CheckboxColumn(
+                    help="Tildá y guardá para quitar la leyenda del banco")})
+        if st.button("Borrar las tildadas", key="ley_del"):
+            quitar = [r["Leyenda"] for _, r in out.iterrows() if r["Borrar"]]
+            n = sum(datos.eliminar_leyenda(t) for t in quitar)
+            st.cache_data.clear()
+            st.success(f"{n} leyenda(s) borrada(s)." if n else "No seleccionaste ninguna.")
+            if n:
+                st.rerun()
+    else:
+        st.info("Todavía no hay leyendas en el banco. Agregá algunas abajo.")
+
+    st.divider()
+    st.markdown("**Agregar leyendas** (una por línea para cargar varias de una vez)")
+    with st.form("ley_add", clear_on_submit=True):
+        texto = st.text_area(
+            "Leyendas nuevas", key="ley_new", height=120,
+            placeholder="Ej:\nVista general del equipo\nGancho principal\n"
+                        "Cabina del operador\nChapa de identificación")
+        if st.form_submit_button("Agregar al banco", type="primary"):
+            n = datos.agregar_leyendas((texto or "").splitlines())
+            st.cache_data.clear()
+            if n:
+                st.success(f"{n} leyenda(s) agregada(s) al banco.")
+                st.rerun()
+            else:
+                st.info("No había leyendas nuevas para agregar (vacías o ya existían).")
+
+
 def render_datos() -> None:
     sub = []
     if _puede_escribir():
         sub.append(("Equipos por empresa", render_equipos_inv))
     if _puede_admin_usuarios():
         sub.append(("Tipos de equipo", render_tipos_equipo))
+        sub.append(("Catálogos", render_catalogos))
+        sub.append(("Leyendas de fotos", render_leyendas))
         sub.append(("Checklist", render_checklist))
         sub.append(("Usuarios", render_usuarios))
         sub.append(("Empresas", render_empresas))

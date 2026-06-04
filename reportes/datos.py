@@ -242,7 +242,9 @@ def datos_certificado(idsolicituddetalle) -> pd.Series | None:
         df[col] = pd.to_datetime(df[col], errors="coerce")
     for col in df.select_dtypes("object").columns:
         df[col] = df[col].astype("string").str.strip()
-    return df.iloc[0]
+    fila = df.iloc[0]
+    fila["testigo"] = testigo_de(idsolicituddetalle)  # None -> el PDF usa el por defecto
+    return fila
 
 
 def servicios() -> pd.DataFrame:
@@ -404,6 +406,267 @@ def asegurar_esquema_empresas() -> None:
             cur.execute(_DDL_CLIENTE_CONTACTO)
             cur.execute(_DDL_CLIENTE_DOMICILIO)
             cur.execute(_DDL_EQUIPO_EMPRESA)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+# --------------------------------------------------------------------------- #
+# Tipología de equipos (catálogos normalizados, SOLO MySQL, aditivo).
+# `equipos` (legada) sigue siendo la fuente: IDEQUIPO no se toca. Estas tablas
+# le "cuelgan" la clasificación estructurada y las normas que aplican.
+# --------------------------------------------------------------------------- #
+_DDL_CAT_TIPO = (
+    "CREATE TABLE IF NOT EXISTS cat_tipo ("
+    " id INT AUTO_INCREMENT PRIMARY KEY,"
+    " nombre VARCHAR(150) NOT NULL,"
+    " activo TINYINT NOT NULL DEFAULT 1"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+_DDL_CAT_EQUIPO = (
+    "CREATE TABLE IF NOT EXISTS cat_equipo ("
+    " id INT AUTO_INCREMENT PRIMARY KEY,"
+    " id_tipo INT NULL,"
+    " nombre VARCHAR(150) NOT NULL,"
+    " activo TINYINT NOT NULL DEFAULT 1,"
+    " KEY idx_cat_equipo (id_tipo)"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+_DDL_CAT_CAPACIDAD = (
+    "CREATE TABLE IF NOT EXISTS cat_capacidad ("
+    " id INT AUTO_INCREMENT PRIMARY KEY,"
+    " valor VARCHAR(60) NOT NULL,"
+    " unidad VARCHAR(30) NULL,"
+    " activo TINYINT NOT NULL DEFAULT 1"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+_DDL_CAT_NORMA = (
+    "CREATE TABLE IF NOT EXISTS cat_norma ("
+    " id INT AUTO_INCREMENT PRIMARY KEY,"
+    " codigo VARCHAR(80) NOT NULL,"
+    " descripcion VARCHAR(255) NULL,"
+    " activo TINYINT NOT NULL DEFAULT 1"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+_DDL_EQUIPO_CLASIF = (
+    "CREATE TABLE IF NOT EXISTS equipo_clasif ("
+    " idequipo VARCHAR(20) NOT NULL PRIMARY KEY,"
+    " id_equipo INT NULL,"
+    " id_capacidad INT NULL,"
+    " fechaalta DATETIME NULL"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+_DDL_EQUIPO_NORMA = (
+    "CREATE TABLE IF NOT EXISTS equipo_norma ("
+    " idequipo VARCHAR(20) NOT NULL,"
+    " id_norma INT NOT NULL,"
+    " PRIMARY KEY (idequipo, id_norma)"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+
+def asegurar_esquema_tipologia() -> None:
+    """Crea los catálogos de tipología y las tablas de clasificación. Solo MySQL."""
+    if db.ENGINE != "mysql":
+        return
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            for ddl in (_DDL_CAT_TIPO, _DDL_CAT_EQUIPO, _DDL_CAT_CAPACIDAD,
+                        _DDL_CAT_NORMA, _DDL_EQUIPO_CLASIF, _DDL_EQUIPO_NORMA):
+                cur.execute(ddl)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+# --- Catálogos: lectura ----------------------------------------------------- #
+def cat_tipo_lista(incluir_inactivos: bool = False) -> pd.DataFrame:
+    cols = ["id", "nombre", "activo"]
+    if db.ENGINE != "mysql":
+        return pd.DataFrame(columns=cols)
+    sql = "SELECT id, nombre, activo FROM cat_tipo"
+    if not incluir_inactivos:
+        sql += " WHERE activo = 1"
+    return db.run_query(sql + " ORDER BY nombre")
+
+
+def cat_equipo_lista(id_tipo=None, incluir_inactivos: bool = False) -> pd.DataFrame:
+    cols = ["id", "id_tipo", "tipo", "nombre", "activo"]
+    if db.ENGINE != "mysql":
+        return pd.DataFrame(columns=cols)
+    sql = ("SELECT e.id, e.id_tipo, t.nombre AS tipo, e.nombre, e.activo "
+           "FROM cat_equipo e LEFT JOIN cat_tipo t ON t.id = e.id_tipo")
+    cond, params = [], []
+    if not incluir_inactivos:
+        cond.append("e.activo = 1")
+    if id_tipo is not None:
+        cond.append("e.id_tipo = ?")
+        params.append(int(id_tipo))
+    if cond:
+        sql += " WHERE " + " AND ".join(cond)
+    return db.run_query(sql + " ORDER BY t.nombre, e.nombre", params or None)
+
+
+def cat_capacidad_lista(incluir_inactivos: bool = False) -> pd.DataFrame:
+    cols = ["id", "valor", "unidad", "activo"]
+    if db.ENGINE != "mysql":
+        return pd.DataFrame(columns=cols)
+    sql = "SELECT id, valor, unidad, activo FROM cat_capacidad"
+    if not incluir_inactivos:
+        sql += " WHERE activo = 1"
+    return db.run_query(sql + " ORDER BY valor")
+
+
+def cat_norma_lista(incluir_inactivos: bool = False) -> pd.DataFrame:
+    cols = ["id", "codigo", "descripcion", "activo"]
+    if db.ENGINE != "mysql":
+        return pd.DataFrame(columns=cols)
+    sql = "SELECT id, codigo, descripcion, activo FROM cat_norma"
+    if not incluir_inactivos:
+        sql += " WHERE activo = 1"
+    return db.run_query(sql + " ORDER BY codigo")
+
+
+# --- Catálogos: escritura --------------------------------------------------- #
+def _cat_insert(tabla: str, valores: dict) -> int:
+    """INSERT simple en una tabla catálogo propia (con AUTO_INCREMENT)."""
+    if db.ENGINE != "mysql":
+        raise RuntimeError("Disponible solo en producción (MySQL).")
+    cols = list(valores)
+    ph = ",".join(["?"] * len(cols))
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt(
+                f"INSERT INTO {tabla} ({','.join(cols)}) VALUES ({ph})"),
+                [valores[c] for c in cols])
+            nid = cur.lastrowid
+            conn.commit()
+            return nid
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def _cat_update(tabla: str, id_: int, valores: dict) -> int:
+    if db.ENGINE != "mysql":
+        raise RuntimeError("Disponible solo en producción (MySQL).")
+    sets = ",".join(f"{c}=?" for c in valores)
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt(f"UPDATE {tabla} SET {sets} WHERE id=?"),
+                        [*valores.values(), int(id_)])
+            n = cur.rowcount
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def agregar_cat_tipo(nombre: str) -> int:
+    return _cat_insert("cat_tipo", {"nombre": nombre, "activo": 1})
+
+
+def actualizar_cat_tipo(id_, nombre: str, activo: bool) -> int:
+    return _cat_update("cat_tipo", id_, {"nombre": nombre, "activo": 1 if activo else 0})
+
+
+def agregar_cat_equipo(id_tipo, nombre: str) -> int:
+    return _cat_insert("cat_equipo", {
+        "id_tipo": None if id_tipo is None else int(id_tipo),
+        "nombre": nombre, "activo": 1})
+
+
+def actualizar_cat_equipo(id_, id_tipo, nombre: str, activo: bool) -> int:
+    return _cat_update("cat_equipo", id_, {
+        "id_tipo": None if id_tipo is None else int(id_tipo),
+        "nombre": nombre, "activo": 1 if activo else 0})
+
+
+def agregar_cat_capacidad(valor: str, unidad: str = None) -> int:
+    return _cat_insert("cat_capacidad", {"valor": valor, "unidad": unidad, "activo": 1})
+
+
+def actualizar_cat_capacidad(id_, valor: str, unidad, activo: bool) -> int:
+    return _cat_update("cat_capacidad", id_, {
+        "valor": valor, "unidad": unidad, "activo": 1 if activo else 0})
+
+
+def agregar_cat_norma(codigo: str, descripcion: str = None) -> int:
+    return _cat_insert("cat_norma", {"codigo": codigo, "descripcion": descripcion,
+                                     "activo": 1})
+
+
+def actualizar_cat_norma(id_, codigo: str, descripcion, activo: bool) -> int:
+    return _cat_update("cat_norma", id_, {
+        "codigo": codigo, "descripcion": descripcion, "activo": 1 if activo else 0})
+
+
+# --- Clasificación de cada tipo de equipo (equipos.IDEQUIPO) ---------------- #
+def clasificaciones_todas() -> pd.DataFrame:
+    """Clasificación (equipo + capacidad) de todos los tipos. Columnas:
+    idequipo, id_equipo, id_capacidad."""
+    cols = ["idequipo", "id_equipo", "id_capacidad"]
+    if db.ENGINE != "mysql":
+        return pd.DataFrame(columns=cols)
+    df = db.run_query(
+        "SELECT idequipo, id_equipo, id_capacidad FROM equipo_clasif")
+    if not df.empty:
+        df["idequipo"] = df["idequipo"].astype("string").str.strip()
+    return df
+
+
+def guardar_clasificacion(idequipo, id_equipo, id_capacidad) -> None:
+    """Upsert de la clasificación de un tipo de equipo. Solo MySQL."""
+    if db.ENGINE != "mysql":
+        return
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO equipo_clasif (idequipo, id_equipo, id_capacidad, fechaalta) "
+                "VALUES (%s,%s,%s,%s) "
+                "ON DUPLICATE KEY UPDATE id_equipo=VALUES(id_equipo), "
+                "id_capacidad=VALUES(id_capacidad)",
+                [str(idequipo),
+                 None if id_equipo is None else int(id_equipo),
+                 None if id_capacidad is None else int(id_capacidad),
+                 dt.datetime.now()])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def normas_todas() -> pd.DataFrame:
+    """Normas que aplican a cada tipo. Columnas: idequipo, id_norma."""
+    cols = ["idequipo", "id_norma"]
+    if db.ENGINE != "mysql":
+        return pd.DataFrame(columns=cols)
+    df = db.run_query("SELECT idequipo, id_norma FROM equipo_norma")
+    if not df.empty:
+        df["idequipo"] = df["idequipo"].astype("string").str.strip()
+    return df
+
+
+def guardar_normas(idequipo, ids_norma) -> None:
+    """Reemplaza el conjunto de normas que aplican a un tipo de equipo. Solo MySQL."""
+    if db.ENGINE != "mysql":
+        return
+    ids = sorted({int(x) for x in (ids_norma or [])})
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt("DELETE FROM equipo_norma WHERE idequipo=?"),
+                        [str(idequipo)])
+            for idn in ids:
+                cur.execute(db.adapt(
+                    "INSERT INTO equipo_norma (idequipo, id_norma) VALUES (?,?)"),
+                    [str(idequipo), idn])
             conn.commit()
         except Exception:
             conn.rollback()
@@ -1575,6 +1838,141 @@ def actualizar_informes(cambios: list[dict], dry_run: bool = False) -> int:
             raise
 
 
+def actualizar_cabeceras(cambios: list[dict], dry_run: bool = False) -> int:
+    """Actualiza la cabecera de la inspección (solicitud_servicio): FECHA y/o
+    IDCLIENTE (empresa), por IDSOLICITUD. Cada cambio: {idsol, fecha?, idcliente?}.
+    Solo escribe las columnas presentes en el dict. Escribe en PRODUCCION."""
+    afectadas = 0
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            for c in cambios:
+                sets, params = [], []
+                if "fecha" in c:
+                    sets.append("FECHA=?")
+                    params.append(c["fecha"])
+                if "idcliente" in c:
+                    sets.append("IDCLIENTE=?")
+                    params.append(c["idcliente"])
+                if not sets:
+                    continue
+                params.append(c["idsol"])
+                cur.execute(db.adapt(
+                    f"UPDATE solicitud_servicio SET {', '.join(sets)} WHERE IDSOLICITUD=?"),
+                    params)
+                afectadas += cur.rowcount
+            conn.rollback() if dry_run else conn.commit()
+            return afectadas
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def actualizar_equipos_detalle(cambios: list[dict], dry_run: bool = False) -> int:
+    """Actualiza el tipo de equipo (solicitud_servicio_det.IDEQUIPO) por
+    IDSOLICITUDDETALLE. Cada cambio: {idd, idequipo}. Escribe en PRODUCCION."""
+    afectadas = 0
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            for c in cambios:
+                cur.execute(db.adapt(
+                    "UPDATE solicitud_servicio_det SET IDEQUIPO=? WHERE IDSOLICITUDDETALLE=?"),
+                    [c["idequipo"], c["idd"]])
+                afectadas += cur.rowcount
+            conn.rollback() if dry_run else conn.commit()
+            return afectadas
+        except Exception:
+            conn.rollback()
+            raise
+
+
+# --------------------------------------------------------------------------- #
+# "Que ha presenciado las pruebas" — editable por inspección (tabla auxiliar)
+# El valor original estaba "quemado" en el reporte (cfg.TESTIGO_PRUEBAS).
+# --------------------------------------------------------------------------- #
+_DDL_INFORME_TESTIGO = (
+    "CREATE TABLE IF NOT EXISTS informe_testigo ("
+    " idsolicituddetalle INT PRIMARY KEY,"
+    " testigo VARCHAR(255) NULL,"
+    " fechaalta DATETIME NULL"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+
+def asegurar_esquema_testigo() -> None:
+    """Crea la tabla del testigo de pruebas si no existe. Solo MySQL (producción)."""
+    if db.ENGINE != "mysql":
+        return
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(_DDL_INFORME_TESTIGO)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def testigo_de(idd) -> str | None:
+    """Testigo guardado para un equipo inspeccionado (None si no hay / no es MySQL)."""
+    if db.ENGINE != "mysql":
+        return None
+    try:
+        df = db.run_query(
+            "SELECT testigo FROM informe_testigo WHERE idsolicituddetalle=?", [int(idd)])
+    except Exception:
+        return None
+    if df.empty:
+        return None
+    v = df.iloc[0]["testigo"]
+    return None if pd.isna(v) else (str(v).strip() or None)
+
+
+def testigos_de(idds) -> dict:
+    """dict {idd: testigo} para varios equipos (para el editor). Solo MySQL."""
+    out: dict = {}
+    idds = [int(x) for x in idds]
+    if db.ENGINE != "mysql" or not idds:
+        return out
+    ph = ",".join(["?"] * len(idds))
+    try:
+        df = db.run_query(
+            f"SELECT idsolicituddetalle AS idd, testigo FROM informe_testigo "
+            f"WHERE idsolicituddetalle IN ({ph})", idds)
+    except Exception:
+        return out
+    for r in df.itertuples():
+        if pd.notna(r.testigo) and str(r.testigo).strip():
+            out[int(r.idd)] = str(r.testigo).strip()
+    return out
+
+
+def guardar_testigos(cambios: list[dict]) -> int:
+    """Upsert del testigo por equipo. cambios: [{idd, testigo}]. Solo MySQL.
+    testigo vacío/None borra el valor (el PDF usa el por defecto)."""
+    if db.ENGINE != "mysql" or not cambios:
+        return 0
+    n = 0
+    ahora = dt.datetime.now()
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            for c in cambios:
+                t = c.get("testigo")
+                t = None if (t is None or not str(t).strip()) else str(t).strip()
+                cur.execute(
+                    "INSERT INTO informe_testigo (idsolicituddetalle, testigo, fechaalta) "
+                    "VALUES (%s,%s,%s) "
+                    "ON DUPLICATE KEY UPDATE testigo=VALUES(testigo), fechaalta=VALUES(fechaalta)",
+                    [int(c["idd"]), t, ahora])
+                n += 1
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
 def set_activo_inspeccion(idsolicitud, activo: int) -> int:
     """Baja/alta lógica de una inspección (solicitud_servicio.ACTIVO)."""
     with db.get_connection() as conn:
@@ -1770,6 +2168,52 @@ def agregar_leyenda(texto: str) -> bool:
             inserted = cur.rowcount > 0
             conn.commit()
             return inserted
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def agregar_leyendas(textos) -> int:
+    """Alta masiva de leyendas al catálogo (una por línea). Devuelve cuántas se
+    insertaron (ignora vacías y duplicadas). Solo MySQL."""
+    if db.ENGINE != "mysql":
+        return 0
+    vistas, limpias = set(), []
+    for t in textos:
+        t = (t or "").strip()
+        if t and t.lower() not in vistas:
+            vistas.add(t.lower())
+            limpias.append(t)
+    if not limpias:
+        return 0
+    n = 0
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            for t in limpias:
+                cur.execute(db.adapt(
+                    "INSERT IGNORE INTO foto_leyenda (texto) VALUES (?)"), [t])
+                n += cur.rowcount
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def eliminar_leyenda(texto: str) -> int:
+    """Borra una leyenda del catálogo. Devuelve filas borradas. Solo MySQL.
+    No afecta las leyendas ya guardadas en fotos existentes."""
+    texto = (texto or "").strip()
+    if db.ENGINE != "mysql" or not texto:
+        return 0
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(db.adapt("DELETE FROM foto_leyenda WHERE texto=?"), [texto])
+            n = cur.rowcount
+            conn.commit()
+            return n
         except Exception:
             conn.rollback()
             raise
