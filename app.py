@@ -1275,6 +1275,7 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
         "Marca": f["marca"].fillna("").values,
         "N° Serie": f["serie"].fillna("").values,
         "Matrícula": f["matricula"].fillna("").values,
+        "Clave": f["clave"].fillna("").values,
         "Vto. inspección": f["vto"].dt.date.values,
         "Estado": f["estado"].fillna("").values,
         "Inspector": f["inspector"].fillna("").values,
@@ -1300,7 +1301,7 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
     edited = st.data_editor(
         ed, hide_index=True, use_container_width=True, key="editor_insp",
         column_order=["Nº", "Activa", "Fecha", "Empresa", "Equipo", "Oblea", "Marca",
-                      "N° Serie", "Matrícula", "Vto. inspección", "Estado",
+                      "N° Serie", "Matrícula", "Clave", "Vto. inspección", "Estado",
                       "Inspector", "Presenció pruebas",
                       "Modelo", "Estructura", "Pluma", "Torre", "Ganchos", "Cabina",
                       "Capacidad", "Estación", "Chasis", "L. Torre", "L. Pluma", "Año",
@@ -1372,6 +1373,8 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
             eq_new = str(nue["Equipo"]).strip()
             if eq_new != str(vie["Equipo"]).strip() and eq_new in eq2id:
                 cambios_eq.append({"idd": int(nue["idd"]), "idequipo": eq2id[eq_new]})
+            if _cambio(nue["Clave"], vie["Clave"]):
+                cambios_eq.append({"idd": int(nue["idd"]), "clave": _norm(nue["Clave"])})
         cambios_testigo = []
         for i in range(len(edited)):
             nue, vie = edited.iloc[i], original.iloc[i]
@@ -1438,7 +1441,7 @@ def render_editar(min_f: dt.date, max_f: dt.date) -> None:
                 if cambios_cab:
                     msg += f" Fecha/empresa en {len(cambios_cab)} inspección(es)."
                 if cambios_eq:
-                    msg += f" Tipo de equipo en {len(cambios_eq)} fila(s)."
+                    msg += f" Equipo/clave en {len(cambios_eq)} cambio(s)."
                 if cambios_testigo:
                     msg += f" Testigo de pruebas en {len(cambios_testigo)} fila(s)."
                 if cambios_caract:
@@ -1607,7 +1610,7 @@ def _ficha_inspeccion(row, pfx: str = "f") -> None:
         ro = {
             "Estado": cur_estado, "Inspector": g("inspector"),
             "Oblea": g("oblea"), "Marca": g("marca"),
-            "N° Serie": g("serie"), "Matrícula": g("matricula"),
+            "N° Serie": g("serie"), "Matrícula": g("matricula"), "Clave": g("clave"),
             "Vto. inspección": row["vto"].strftime("%d/%m/%Y") if pd.notna(row["vto"]) else "",
             "Observaciones": g("obs"),
         }
@@ -1636,6 +1639,8 @@ def _ficha_inspeccion(row, pfx: str = "f") -> None:
             c5, c6 = st.columns(2)
             serie = c5.text_input("N° Serie", value=g("serie"), key=f"ser_{pfx}_{idd}")
             matricula = c6.text_input("Matrícula", value=g("matricula"), key=f"mat_{pfx}_{idd}")
+            clave = st.text_input("Clave de identificación del equipo", value=g("clave"),
+                                  key=f"cla_{pfx}_{idd}")
             vto_default = row["vto"].date() if pd.notna(row["vto"]) else None
             vto = st.date_input("Vto. inspección", value=vto_default, format="DD/MM/YYYY",
                                 key=f"vto_{pfx}_{idd}")
@@ -1704,6 +1709,7 @@ def _ficha_inspeccion(row, pfx: str = "f") -> None:
                             anio=int(anio) or None, capac=float(capac), torre=float(torre),
                             long_torre=float(long_torre), long_pluma=float(long_pluma))])
                         datos.guardar_baldes([{"idd": idd, "capac_balde": float(capac_balde)}])
+                        datos.actualizar_equipos_detalle([{"idd": idd, "clave": _norm(clave)}])
                         st.cache_data.clear()
                         st.success("Cambios guardados.")
                         st.rerun()

@@ -1761,6 +1761,7 @@ SELECT d.IDSOLICITUDDETALLE AS idd, s.IDSOLICITUD AS idsol, s.ACTIVO AS activo_s
        ip.ESTACION_CONTROL AS estacion, ip.CHASIS AS chasis, ip.anio_fabrica AS anio,
        ip.torre AS torre, ip.CAPAC_MAX_ELEVA AS capac,
        ip.long_max_torre AS long_torre, ip.LONG_MAX_PLUMA AS long_pluma,
+       d.CLAVE_EQUIPO AS clave,
        ip.IDRESULTADO AS idresultado, tr.DESCRIPCION AS estado,
        ip.IDUSUARIO AS idinspector, u.NOMBRE AS inspector
 FROM solicitud_servicio s
@@ -1911,16 +1912,26 @@ def actualizar_cabeceras(cambios: list[dict], dry_run: bool = False) -> int:
 
 
 def actualizar_equipos_detalle(cambios: list[dict], dry_run: bool = False) -> int:
-    """Actualiza el tipo de equipo (solicitud_servicio_det.IDEQUIPO) por
-    IDSOLICITUDDETALLE. Cada cambio: {idd, idequipo}. Escribe en PRODUCCION."""
+    """Actualiza solicitud_servicio_det por IDSOLICITUDDETALLE. Cada cambio:
+    {idd, idequipo?, clave?}. Solo escribe las columnas presentes. PRODUCCION."""
     afectadas = 0
     with db.get_connection() as conn:
         cur = conn.cursor()
         try:
             for c in cambios:
+                sets, params = [], []
+                if "idequipo" in c:
+                    sets.append("IDEQUIPO=?")
+                    params.append(c["idequipo"])
+                if "clave" in c:
+                    sets.append("CLAVE_EQUIPO=?")
+                    params.append(c["clave"])
+                if not sets:
+                    continue
+                params.append(c["idd"])
                 cur.execute(db.adapt(
-                    "UPDATE solicitud_servicio_det SET IDEQUIPO=? WHERE IDSOLICITUDDETALLE=?"),
-                    [c["idequipo"], c["idd"]])
+                    f"UPDATE solicitud_servicio_det SET {', '.join(sets)} "
+                    f"WHERE IDSOLICITUDDETALLE=?"), params)
                 afectadas += cur.rowcount
             conn.rollback() if dry_run else conn.commit()
             return afectadas
