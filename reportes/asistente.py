@@ -86,18 +86,37 @@ sistema de gestión). Explicá sus requisitos cuando te lo pregunten.
 
 Si no estás seguro de un detalle puntual del sistema, decílo y sugerí dónde mirar dentro \
 de la app. No inventes funciones que no existen.
+
+Cuando te pidan revisar si una inspección está "bien informada", te voy a pasar los \
+DATOS DE LA INSPECCIÓN. Compará esos datos contra los procedimientos/manuales de la BASE \
+DE CONOCIMIENTO y respondé: (1) si está completa o no; (2) qué campos faltan o quedaron \
+vacíos; (3) inconsistencias (ej. resultado Favorable pero sin oblea o sin vencimiento); \
+(4) recomendaciones para completarla. Si no hay un procedimiento cargado para ese tipo de \
+equipo, evaluá igual la completitud general y aclaralo.
 """
 
 
-def responder(historial: list[dict]) -> str:
+def responder(historial: list[dict], conocimiento: str = "",
+              datos_inspeccion: str = "") -> str:
     """historial: lista de {'role': 'user'|'assistant', 'content': str}.
+    `conocimiento`: base de conocimiento (fuente prioritaria).
+    `datos_inspeccion`: datos de una inspección consultada (para evaluarla).
     Devuelve el texto de la respuesta. Lanza excepción si falla la API."""
     key = _api_key()
     if not key:
         raise RuntimeError("Falta configurar OPENAI_API_KEY en el servidor.")
+    sistema = SYSTEM_PROMPT
+    if (conocimiento or "").strip():
+        sistema += ("\n\n=== BASE DE CONOCIMIENTO (material provisto por la empresa; "
+                    "usalo como fuente PRIORITARIA y citá esta información cuando "
+                    "corresponda) ===\n" + conocimiento.strip()[:12000])
+    if (datos_inspeccion or "").strip():
+        sistema += ("\n\n=== DATOS DE LA INSPECCIÓN CONSULTADA (evaluá si está bien "
+                    "informada según los procedimientos) ===\n"
+                    + datos_inspeccion.strip()[:6000])
     # Solo los últimos mensajes, para acotar costo/contexto
     recientes = [m for m in historial if m.get("role") in ("user", "assistant")][-12:]
-    mensajes = [{"role": "system", "content": SYSTEM_PROMPT}] + recientes
+    mensajes = [{"role": "system", "content": sistema}] + recientes
     resp = requests.post(
         OPENAI_URL,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},

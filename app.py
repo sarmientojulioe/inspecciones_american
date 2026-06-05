@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import re
 import zipfile
 from collections import Counter
 from io import BytesIO
@@ -159,7 +160,7 @@ def _init_esquema():
                datos.asegurar_esquema_empresas, datos.asegurar_esquema_kpi,
                datos.asegurar_esquema_tipologia, datos.asegurar_esquema_testigo,
                datos.asegurar_esquema_familia, datos.asegurar_esquema_balde,
-               datos.asegurar_esquema_instrumentos):
+               datos.asegurar_esquema_instrumentos, datos.asegurar_esquema_asistente):
         try:
             fn()
         except Exception:  # noqa: BLE001
@@ -390,6 +391,11 @@ def cat_tiposresultado2() -> pd.DataFrame:
 @st.cache_data(ttl=300)
 def cat_leyendas() -> list[str]:
     return datos.leyendas_lista()
+
+
+@st.cache_data(ttl=120)
+def cat_conocimiento() -> str:
+    return datos.conocimiento_asistente()
 
 
 @st.cache_data(ttl=300)
@@ -3105,6 +3111,60 @@ def render_instrumentos() -> None:
                     st.info("Vacío o ya existe.")
 
 
+def render_asistente_base() -> None:
+    """Editor de la base de conocimiento del asistente."""
+    st.subheader("Asistente — base de conocimiento")
+    if not _puede_admin_usuarios():
+        st.error("No tenés permisos para esta sección.")
+        return
+    if not _es_mysql():
+        st.caption("Disponible sólo en producción (MySQL).")
+        return
+    st.caption("Texto que el asistente usa como **fuente prioritaria** para responder "
+               "(procedimientos, FAQs, detalles de la norma, instructivos, etc.). "
+               "Pegá acá tu material; el asistente lo va a citar cuando aplique.")
+    actual = datos.conocimiento_asistente()
+    texto = st.text_area("Base de conocimiento", value=actual, height=400,
+                         key="asis_conoc",
+                         placeholder="Ej:\n# Procedimiento de inspección de grúas\n...\n"
+                                     "# Preguntas frecuentes\n...\n")
+    st.caption(f"{len(texto)} caracteres (se usan hasta ~12.000 por consulta).")
+    if st.button("Guardar base de conocimiento", type="primary", key="asis_conoc_save"):
+        try:
+            datos.guardar_conocimiento_asistente(texto)
+            cat_conocimiento.clear()
+            st.success("Base de conocimiento guardada.")
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"No se pudo guardar: {exc}")
+
+    st.divider()
+    st.markdown("**📄 Cargar manual de procedimientos (PDF o TXT)**")
+    st.caption("Extrae el texto del archivo y lo agrega al final de la base de "
+               "conocimiento de arriba. Después revisá y guardá.")
+    up = st.file_uploader("Archivo", type=["pdf", "txt", "md"], key="asis_file")
+    if up is not None and st.button("Agregar texto del archivo", key="asis_file_add"):
+        try:
+            if up.name.lower().endswith(".pdf"):
+                import fitz  # pymupdf
+                doc = fitz.open(stream=up.getvalue(), filetype="pdf")
+                extraido = "\n".join(p.get_text() for p in doc)
+            else:
+                extraido = up.getvalue().decode("utf-8", errors="replace")
+            extraido = extraido.strip()
+            if not extraido:
+                st.warning("No se pudo extraer texto (¿PDF escaneado como imagen?).")
+            else:
+                nuevo = (actual + "\n\n" if actual.strip() else "") + \
+                    f"# {up.name}\n{extraido}"
+                datos.guardar_conocimiento_asistente(nuevo)
+                cat_conocimiento.clear()
+                st.success(f"Agregado «{up.name}» ({len(extraido)} caracteres). "
+                           "Recargá para verlo en el cuadro.")
+                st.rerun()
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"No se pudo procesar el archivo: {exc}")
+
+
 def render_datos() -> None:
     sub = []
     if _puede_escribir():
@@ -3114,6 +3174,7 @@ def render_datos() -> None:
         sub.append(("Catálogos", render_catalogos))
         sub.append(("Leyendas de fotos", render_leyendas))
         sub.append(("Instrumentos", render_instrumentos))
+        sub.append(("Asistente", render_asistente_base))
         sub.append(("Checklist", render_checklist))
         sub.append(("Usuarios", render_usuarios))
         sub.append(("Empresas", render_empresas))
@@ -3393,9 +3454,11 @@ def render_asistente_flotante() -> None:
         """
         <style>
         [data-testid="stPopover"] { position: fixed; bottom: 1.1rem; right: 1.1rem;
+            left: auto !important; width: auto !important; max-width: 240px;
             z-index: 1000; }
-        [data-testid="stPopover"] > button { border-radius: 2rem; box-shadow:
-            0 2px 8px rgba(0,0,0,0.25); }
+        [data-testid="stPopover"] > button { width: auto !important;
+            border-radius: 2rem; padding: 0.4rem 1rem; box-shadow:
+            0 2px 10px rgba(0,0,0,0.3); }
         </style>
         """, unsafe_allow_html=True)
     with st.popover("💬 Asistente", use_container_width=False):
@@ -3420,9 +3483,20 @@ def render_asistente_flotante() -> None:
             st.rerun()
         if enviar and _norm(q):
             hist.append({"role": "user", "content": q.strip()})
+            # Si menciona una inspección/informe con número, le paso sus datos
+            datos_insp = ""
+            ql = q.lower()
+            if any(p in ql for p in ("inspecc", "informe", "n°", "nro", "numero", "número")):
+                m = re.search(r"(\d{1,7})", q)
+                if m:
+                    try:
+                        datos_insp = datos.resumen_inspeccion(m.group(1))
+                    except Exception:  # noqa: BLE001
+                        datos_insp = ""
             try:
                 with st.spinner("Pensando…"):
-                    resp = asistente.responder(hist)
+                    resp = asistente.responder(hist, conocimiento=cat_conocimiento(),
+                                               datos_inspeccion=datos_insp)
             except Exception as exc:  # noqa: BLE001
                 resp = f"No pude responder: {exc}"
             hist.append({"role": "assistant", "content": resp})

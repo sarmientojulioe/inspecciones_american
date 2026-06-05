@@ -2491,6 +2491,111 @@ def instrumentos_por_vencer(dias: int = 30) -> pd.DataFrame:
     return df
 
 
+# --------------------------------------------------------------------------- #
+# Base de conocimiento del asistente (texto libre editable, solo MySQL).
+# --------------------------------------------------------------------------- #
+_DDL_ASIS_CONOC = (
+    "CREATE TABLE IF NOT EXISTS asistente_conocimiento ("
+    " id INT PRIMARY KEY, contenido MEDIUMTEXT NULL, fechaalta DATETIME NULL"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+
+def asegurar_esquema_asistente() -> None:
+    if db.ENGINE != "mysql":
+        return
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(_DDL_ASIS_CONOC)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def conocimiento_asistente() -> str:
+    """Texto de la base de conocimiento del asistente ('' si no hay / no MySQL)."""
+    if db.ENGINE != "mysql":
+        return ""
+    try:
+        df = db.run_query("SELECT contenido FROM asistente_conocimiento WHERE id=1")
+    except Exception:
+        return ""
+    if df.empty or pd.isna(df.iloc[0]["contenido"]):
+        return ""
+    return str(df.iloc[0]["contenido"])
+
+
+def guardar_conocimiento_asistente(texto: str) -> None:
+    """Upsert del texto de la base de conocimiento (fila única id=1). Solo MySQL."""
+    if db.ENGINE != "mysql":
+        return
+    with db.get_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO asistente_conocimiento (id, contenido, fechaalta) "
+                "VALUES (1,%s,%s) "
+                "ON DUPLICATE KEY UPDATE contenido=VALUES(contenido), "
+                "fechaalta=VALUES(fechaalta)",
+                [texto or "", dt.datetime.now()])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def resumen_inspeccion(num) -> str:
+    """Texto con los datos de una inspección (por Nº) para que el asistente
+    evalúe si está bien informada. '' si no existe."""
+    try:
+        num = int(num)
+    except (TypeError, ValueError):
+        return ""
+    df = db.run_query(
+        "SELECT d.IDSOLICITUDDETALLE AS idd FROM solicitud_servicio s "
+        "JOIN solicitud_servicio_det d ON d.IDSOLICITUD = s.IDSOLICITUD "
+        "WHERE CAST(s.NUM AS BIGINT) = ? ORDER BY d.secuencia", [num])
+    if df.empty:
+        return ""
+    campos = [
+        ("Cliente", "cliente"), ("Fecha de inspección", "fecha_inspeccion"),
+        ("Equipo", "equipo"), ("Marca", "marca"), ("Modelo", "modelo"),
+        ("Estructura", "estructura"), ("N° de serie", "serie"),
+        ("Año de fabricación", "anio_fabrica"), ("Matrícula", "matricula"),
+        ("Oblea", "oblea"), ("Clave", "clave"),
+        ("Capacidad máx. elevación", "capac_max_eleva"), ("Pluma", "pluma"),
+        ("Torre", "torre"), ("Ganchos de carga", "ganchos_carga"),
+        ("Cabina", "cabina"), ("Estación de control", "estacion_control"),
+        ("N° de chasis", "chasis"), ("Long. máx. torre", "long_max_torre"),
+        ("Long. máx. pluma", "long_max_pluma"), ("Capacidad de balde", "capac_balde"),
+        ("Norma de referencia", "norma_referencia"),
+        ("Procedimiento de referencia", "procedimiento_referencia"),
+        ("Resultado", "resultado"), ("Vto. inspección", "vto_inspeccion"),
+        ("Inspector", "inspector"), ("Presenció las pruebas", "testigo"),
+        ("Observaciones", "observaciones"),
+    ]
+    bloques = []
+    for i, idd in enumerate(df["idd"], start=1):
+        d = datos_certificado(int(idd))
+        if d is None:
+            continue
+        lineas = [f"Equipo #{i} (inspección Nº {num}):"]
+        for etiqueta, clave in campos:
+            v = d.get(clave) if clave in d.index else None
+            try:
+                vacio = v is None or pd.isna(v) or str(v).strip() == ""
+            except (TypeError, ValueError):
+                vacio = False
+            if isinstance(v, float):
+                txt = "(VACÍO)" if vacio else f"{v:g}"
+            else:
+                txt = "(VACÍO)" if vacio else str(v).strip()
+            lineas.append(f"  - {etiqueta}: {txt}")
+        bloques.append("\n".join(lineas))
+    return "\n\n".join(bloques)
+
+
 def set_activo_inspeccion(idsolicitud, activo: int) -> int:
     """Baja/alta lógica de una inspección (solicitud_servicio.ACTIVO)."""
     with db.get_connection() as conn:
